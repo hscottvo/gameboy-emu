@@ -113,7 +113,7 @@ impl Registers {
 #[cfg(test)]
 mod tests {
     use super::Registers;
-    
+
     #[test]
     fn r16_getters() {
         let mut reg: Registers = Registers::default();
@@ -129,7 +129,7 @@ mod tests {
         reg.set_h(0x31);
         reg.set_l(0x15);
         assert_eq!(reg.hl(), 0x3115);
-    } 
+    }
 
     #[test]
     fn r16_setters() {
