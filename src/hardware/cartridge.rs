@@ -1,5 +1,5 @@
-use std::ops::Index;
 use std::fs::read;
+use std::ops::Index;
 
 pub struct Cartridge {
     data: Vec<u8>,
@@ -11,16 +11,18 @@ impl Cartridge {
 
         let data = match read_result {
             Ok(bytes) => bytes,
-            Err(e) =>  panic!("{:?}", e)//{println!("{:?}", e); Vec::new()}
+            Err(e) => panic!("{:?}", e), //{println!("{:?}", e); Vec::new()}
         };
-        println!("{:#04X?}", &data[0x0104..=0x0133]);
 
-        Cartridge{data: data}
+        Cartridge { data: data }
+    }
+
+    pub fn mbc_type(&self) -> &u8 {
+        &self.data[0x0147]
     }
     pub fn data(&self) -> &Vec<u8> {
         &self.data
     }
-    // pub fn 
 }
 
 impl Index<usize> for Cartridge {
@@ -35,9 +37,24 @@ mod tests {
     use super::Cartridge;
 
     #[test]
-    fn one() {
-        let cart = Cartridge::new("./roms/tetris.gb");
+    fn read_pokemon_red() {
+        let cart = Cartridge::new("./roms/pkmn-red.gb");
         assert_ne!(cart.data, Vec::new());
+        assert_eq!(*cart.mbc_type(), 0x13);
+    }
+
+    #[test]
+    fn read_tetris() {
+        let cart = Cartridge::new("./roms/tetris.gb");
+        assert_eq!(*cart.mbc_type(), 0x00);
+        assert_ne!(cart.data, Vec::new());
+    }
+
+    #[test]
+    fn read_tloz() {
+        let cart = Cartridge::new("./roms/tloz.gb");
+        assert_ne!(cart.data, Vec::new());
+        assert_eq!(*cart.mbc_type(), 0x03);
     }
 
     #[test]
