@@ -1,3 +1,4 @@
+use log::{error, info};
 // https://gbdev.io/pandocs/CPU_Registers_and_Flags.html
 #[derive(Debug, Default)]
 pub struct Registers {
@@ -16,6 +17,9 @@ pub struct Registers {
 
 // getters
 impl Registers {
+    pub fn get_r16(&self, dest: u8) -> u16 {
+        todo!()
+    }
     pub fn a(&self) -> &u8 {
         &self.a
     }
@@ -60,8 +64,78 @@ impl Registers {
     }
 }
 
+pub enum SetRegResult {
+    Success,
+    Defer,
+    Failure,
+}
+
+enum R16Index {
+    BC,
+    DE,
+    HL,
+    SP,
+}
+impl TryFrom<u8> for R16Index {
+    type Error = String;
+    fn try_from(reg: u8) -> Result<R16Index, String> {
+        use R16Index::*;
+        match reg {
+            0 => Ok(BC),
+            1 => Ok(DE),
+            2 => Ok(HL),
+            3 => Ok(SP),
+            _ => Err(format!("Invalid R16 index {}", reg)),
+        }
+    }
+}
+
 // setters
 impl Registers {
+    pub fn set_r8(&mut self, val: u8, dest: u8) -> SetRegResult {
+        if dest == 6 {
+            return SetRegResult::Defer;
+        }
+        match dest {
+            0 => self.set_b(val),
+            1 => self.set_c(val),
+            2 => self.set_d(val),
+            3 => self.set_e(val),
+            4 => self.set_h(val),
+            5 => self.set_l(val),
+            7 => self.set_a(val),
+            // _ => panic!("Invalid register R8"),
+            _ => error!("Invalid R8 register {}", dest),
+        };
+        SetRegResult::Success
+    }
+    pub fn set_r16(&mut self, val: u16, dest: u8) -> SetRegResult {
+        // todo!()
+        let index: Result<R16Index, String> = dest.try_into();
+        match index {
+            Ok(R16Index::BC) => {
+                self.set_bc(val);
+                SetRegResult::Success
+            }
+            Ok(R16Index::DE) => {
+                self.set_de(val);
+                SetRegResult::Success
+            }
+            Ok(R16Index::HL) => {
+                self.set_hl(val);
+                SetRegResult::Success
+            }
+            Ok(R16Index::SP) => {
+                self.set_sp(val);
+                SetRegResult::Success
+            }
+            Err(e) => {
+                error!("{}", e);
+                SetRegResult::Failure
+            }
+        };
+        SetRegResult::Success
+    }
     pub fn set_a(&mut self, value: u8) {
         self.a = value;
     }
