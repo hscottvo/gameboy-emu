@@ -97,6 +97,32 @@ impl TryFrom<u8> for R16Index {
     }
 }
 
+pub enum SetRegResult {
+    Success,
+    Defer,
+    Failure,
+}
+
+enum R16Index {
+    BC,
+    DE,
+    HL,
+    SP,
+}
+impl TryFrom<u8> for R16Index {
+    type Error = String;
+    fn try_from(reg: u8) -> Result<R16Index, String> {
+        use R16Index::*;
+        match reg {
+            0 => Ok(BC),
+            1 => Ok(DE),
+            2 => Ok(HL),
+            3 => Ok(SP),
+            _ => Err(format!("Invalid R16 index {}", reg)),
+        }
+    }
+}
+
 // setters
 impl Registers {
     pub fn set_r8(&mut self, val: u8, dest: u8) -> SetRegResult {
