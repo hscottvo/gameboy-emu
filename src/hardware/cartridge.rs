@@ -17,6 +17,9 @@ impl Cartridge {
 
         Cartridge{data: data}
     }
+    pub fn data(&self) -> &Vec<u8> {
+        &self.data
+    }
     // pub fn 
 }
 
