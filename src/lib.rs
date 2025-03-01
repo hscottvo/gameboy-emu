@@ -1,10 +1,9 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::Clamped;
 use wasm_bindgen::JsCast;
-use web_sys::{CanvasRenderingContext2d,HtmlCanvasElement,ImageData};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
 
 pub mod hardware;
-
 
 // #[wasm_bindgen]
 // extern "C" {
@@ -37,13 +36,13 @@ pub fn start() -> Result<(), JsValue> {
 
     let mut backbuffer = vec![0u8; width * height * 4];
 
-    for y in 0..height{
+    for y in 0..height {
         for x in 0..width {
             let offset = (y * width + x) * 4;
             backbuffer[offset] = (x % 256) as u8;
-            backbuffer[offset+1] = (y % 256) as u8;
-            backbuffer[offset+2] = 128 as u8;
-            backbuffer[offset+3] = 255 as u8;
+            backbuffer[offset + 1] = (y % 256) as u8;
+            backbuffer[offset + 2] = 128 as u8;
+            backbuffer[offset + 3] = 255 as u8;
         }
     }
 
@@ -54,6 +53,4 @@ pub fn start() -> Result<(), JsValue> {
     )?;
     context.put_image_data(&image_data, 0.0, 0.0)?;
     Ok(())
-
-
 }

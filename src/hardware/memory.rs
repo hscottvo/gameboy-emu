@@ -1,6 +1,6 @@
 use super::cartridge::Cartridge;
 use std::cmp::min;
-use std::ops::Index;
+use std::ops::{Index, IndexMut};
 
 pub struct Memory {
     data: Vec<u8>,
@@ -29,6 +29,11 @@ impl Index<usize> for Memory {
     type Output = u8;
     fn index(&self, index: usize) -> &Self::Output {
         &self.data[index]
+    }
+}
+impl IndexMut<usize> for Memory {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.data[index]
     }
 }
 

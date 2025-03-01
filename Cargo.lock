@@ -409,6 +409,7 @@ name = "gameboy_hw"
 version = "0.1.0"
 dependencies = [
  "js-sys",
+ "log",
  "sdl3",
  "wasm-bindgen",
  "wasm-bindgen-cli",
