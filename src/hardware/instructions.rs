@@ -247,6 +247,8 @@ impl Instruction {
         } else if check_mask(byte, 0b_1110_0000, 0) {
             Some(LdhImm8A)
         } else if check_mask(byte, 0b_1110_1010, 0) {
+            Some(LdImm16A)
+        } else if check_mask(byte, 0b_1111_0010, 0) {
             Some(LdhAC)
         } else if check_mask(byte, 0b_1111_0000, 0) {
             Some(LdhAImm8)
@@ -268,7 +270,8 @@ impl Instruction {
     }
 }
 
-pub enum PrefixOpcode {
+#[derive(Debug)]
+pub enum InstructionCB {
     RLCR8 { operand: u8 },
     RRCR8 { operand: u8 },
     RLR8 { operand: u8 },
@@ -283,9 +286,9 @@ pub enum PrefixOpcode {
     SetB3R8 { bit_index: u8, operand: u8 },
 }
 
-impl PrefixOpcode {
+impl InstructionCB {
     pub fn from_byte(byte: u8) -> Option<Self> {
-        use PrefixOpcode::*;
+        use InstructionCB::*;
         let operand = byte & 0b_0000_0111;
         if check_mask(byte, 0b_0000_0000, 0) {
             Some(RLCR8 { operand })
