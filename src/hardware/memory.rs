@@ -9,13 +9,13 @@ pub struct Memory {
 impl Memory {
     pub fn new() -> Self {
         let ret = Memory {
-            data: vec![0; 0xFFFF],
+            data: vec![0; 0x10000],
         };
         ret
     }
     pub fn new_with_cart(cart: Cartridge) -> Self {
         let mut ret = Memory {
-            data: vec![0; 0xFFFF],
+            data: vec![0; 0x10000],
         };
         let data = cart.data();
         for i in 0..min(data.len(), 0x8000) {
