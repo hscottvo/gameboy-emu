@@ -426,6 +426,8 @@ impl From<InstructionCB> for u8 {
 }
 #[cfg(test)]
 mod test {
+    use super::Instruction;
+    use super::InstructionCB;
 
     #[test]
     fn check_mask() {
@@ -435,5 +437,522 @@ mod test {
         assert!(check_mask(0b_0000_0001, 0b_0001_0001, 0b_0011_0000));
         assert!(check_mask(0b_0000_0001, 0b_0011_0001, 0b_0011_0000));
         assert!(!check_mask(0b_0000_0001, 0b_1011_0001, 0b_0011_0000));
+    }
+    #[test]
+    fn check_from() {
+        use super::InstructionCB;
+        let instr = InstructionCB::RLCR8 { operand: 7 };
+        assert_eq!(u8::from(instr), 7);
+    }
+
+    mod instruction {
+        use super::Instruction;
+        mod block_0 {
+            use super::Instruction::*;
+
+            #[test]
+            fn nop() {
+                assert_eq!(Nop, 0x00.try_into().unwrap())
+            }
+
+            #[test]
+            fn ld_r16_imm16() {
+                for dest in 0..4 {
+                    assert_eq!(
+                        LdR16Imm16 { dest },
+                        (0x01 | (dest << 4)).try_into().unwrap()
+                    );
+                }
+            }
+
+            #[test]
+            fn ld_r16mem_a() {
+                for dest in 0..4 {
+                    assert_eq!(LdR16MemA { dest }, (0x02 | (dest << 4)).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn ld_a_r16mem() {
+                for source in 0..4 {
+                    assert_eq!(
+                        LdAR16Mem { source },
+                        (0x0A | (source << 4)).try_into().unwrap()
+                    );
+                }
+            }
+
+            #[test]
+            fn ld_imm16_sp() {
+                assert_eq!(LdImm16SP, 0x08.try_into().unwrap());
+            }
+
+            #[test]
+            fn inc_r16() {
+                for operand in 0..4 {
+                    assert_eq!(
+                        IncR16 { operand },
+                        (0x03 | (operand << 4)).try_into().unwrap()
+                    );
+                }
+            }
+
+            #[test]
+            fn dec_r16() {
+                for operand in 0..4 {
+                    assert_eq!(
+                        DecR16 { operand },
+                        (0x0B | (operand << 4)).try_into().unwrap()
+                    );
+                }
+            }
+
+            #[test]
+            fn add_hl_r16() {
+                for operand in 0..4 {
+                    assert_eq!(
+                        AddHLR16 { operand },
+                        (0x09 | (operand << 4)).try_into().unwrap()
+                    );
+                }
+            }
+
+            #[test]
+            fn inc_r8() {
+                for operand in 0..8 {
+                    assert_eq!(
+                        IncR8 { operand },
+                        (0x04 | (operand << 3)).try_into().unwrap()
+                    );
+                }
+            }
+
+            #[test]
+            fn dec_r8() {
+                for operand in 0..8 {
+                    assert_eq!(
+                        DecR8 { operand },
+                        (0x05 | (operand << 3)).try_into().unwrap()
+                    );
+                }
+            }
+
+            #[test]
+            fn ld_r8_imm8() {
+                for dest in 0..8 {
+                    assert_eq!(LdR8Imm8 { dest }, (0x06 | (dest << 3)).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn rlca() {
+                assert_eq!(RLCA, 0x07.try_into().unwrap());
+            }
+
+            #[test]
+            fn rrca() {
+                assert_eq!(RRCA, 0x0F.try_into().unwrap());
+            }
+
+            #[test]
+            fn rla() {
+                assert_eq!(RLA, 0x17.try_into().unwrap());
+            }
+
+            #[test]
+            fn rra() {
+                assert_eq!(RRA, 0x1F.try_into().unwrap());
+            }
+
+            #[test]
+            fn daa() {
+                assert_eq!(DAA, 0x27.try_into().unwrap());
+            }
+
+            #[test]
+            fn cpl() {
+                assert_eq!(CPL, 0x2F.try_into().unwrap());
+            }
+
+            #[test]
+            fn scf() {
+                assert_eq!(SCF, 0x37.try_into().unwrap());
+            }
+
+            #[test]
+            fn ccf() {
+                assert_eq!(CCF, 0x3F.try_into().unwrap());
+            }
+
+            #[test]
+            fn jr_imm8() {
+                assert_eq!(JRImm8, 0x18.try_into().unwrap());
+            }
+
+            #[test]
+            fn jr_cond_imm8() {
+                for condition in 0..4 {
+                    assert_eq!(
+                        JRCondImm8 { condition },
+                        (0x20 | (condition << 3)).try_into().unwrap()
+                    );
+                }
+            }
+
+            #[test]
+            fn stop() {
+                assert_eq!(Stop, 0x10.try_into().unwrap());
+            }
+        }
+        mod block_1 {
+            use super::Instruction::*;
+            #[test]
+            fn ld_r8_r8() {
+                for dest in 0..8 {
+                    for source in 0..8 {
+                        if dest == 6 && source == 6 {
+                            continue;
+                        }
+                        assert_eq!(
+                            LdR8R8 { dest, source },
+                            (0x40 | (dest << 3) | source).try_into().unwrap()
+                        );
+                    }
+                }
+            }
+
+            #[test]
+            fn halt() {
+                assert_eq!(Halt, 0x76.try_into().unwrap());
+            }
+        }
+
+        mod block_2 {
+            use super::Instruction::*;
+
+            #[test]
+            fn add_a_r8() {
+                for operand in 0..8 {
+                    assert_eq!(AddAR8 { operand }, (0x80 | operand).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn adc_a_r8() {
+                for operand in 0..8 {
+                    assert_eq!(AdcAR8 { operand }, (0x88 | operand).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn sub_a_r8() {
+                for operand in 0..8 {
+                    assert_eq!(SubAR8 { operand }, (0x90 | operand).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn sbc_a_r8() {
+                for operand in 0..8 {
+                    assert_eq!(SbcAR8 { operand }, (0x98 | operand).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn and_a_r8() {
+                for operand in 0..8 {
+                    assert_eq!(AndAR8 { operand }, (0xA0 | operand).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn xor_a_r8() {
+                for operand in 0..8 {
+                    assert_eq!(XorAR8 { operand }, (0xA8 | operand).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn or_a_r8() {
+                for operand in 0..8 {
+                    assert_eq!(OrAR8 { operand }, (0xB0 | operand).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn cp_a_r8() {
+                for operand in 0..8 {
+                    assert_eq!(CpAR8 { operand }, (0xB8 | operand).try_into().unwrap());
+                }
+            }
+        }
+        mod block_3 {
+            use super::Instruction::*;
+
+            #[test]
+            fn add_a_imm8() {
+                assert_eq!(AddAImm8, 0xC6.try_into().unwrap());
+            }
+
+            #[test]
+            fn adc_a_imm8() {
+                assert_eq!(AdcAImm8, 0xCE.try_into().unwrap());
+            }
+
+            #[test]
+            fn sub_a_imm8() {
+                assert_eq!(SubAImm8, 0xD6.try_into().unwrap());
+            }
+
+            #[test]
+            fn sbc_a_imm8() {
+                assert_eq!(SbcAImm8, 0xDE.try_into().unwrap());
+            }
+
+            #[test]
+            fn and_a_imm8() {
+                assert_eq!(AndAImm8, 0xE6.try_into().unwrap());
+            }
+
+            #[test]
+            fn xor_a_imm8() {
+                assert_eq!(XorAImm8, 0xEE.try_into().unwrap());
+            }
+
+            #[test]
+            fn or_a_imm8() {
+                assert_eq!(OrAImm8, 0xF6.try_into().unwrap());
+            }
+
+            #[test]
+            fn cp_a_imm8() {
+                assert_eq!(CpAImm8, 0xFE.try_into().unwrap());
+            }
+
+            #[test]
+            fn ret_cond() {
+                for cond in 0..4 {
+                    assert_eq!(RetCond { cond }, (0xC0 | cond << 3).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn ret() {
+                assert_eq!(Ret, 0xC9.try_into().unwrap());
+            }
+
+            #[test]
+            fn ret_i() {
+                assert_eq!(RetI, 0xD9.try_into().unwrap());
+            }
+
+            #[test]
+            fn jp_cond_imm16() {
+                for cond in 0..4 {
+                    assert_eq!(JpCondImm16 { cond }, (0xC2 | cond << 3).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn jp_imm16() {
+                assert_eq!(JpImm16, 0xC3.try_into().unwrap());
+            }
+
+            #[test]
+            fn jp_hl() {
+                assert_eq!(JpHL, 0xE9.try_into().unwrap());
+            }
+
+            #[test]
+            fn call_cond_imm16() {
+                for cond in 0..4 {
+                    assert_eq!(
+                        CallCondImm16 { cond },
+                        (0xC4 | cond << 3).try_into().unwrap()
+                    );
+                }
+            }
+
+            #[test]
+            fn call_imm16() {
+                assert_eq!(CallImm16, 0xCD.try_into().unwrap());
+            }
+
+            #[test]
+            fn rst_tgt3() {
+                for target in 0..8 {
+                    assert_eq!(RstTgt3 { target }, (0xC7 | target << 3).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn pop_r16_stk() {
+                for reg in 0..4 {
+                    assert_eq!(PopR16Stk { reg }, (0xC1 | reg << 4).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn push_r16_stk() {
+                for reg in 0..4 {
+                    assert_eq!(PushR16Stk { reg }, (0xC5 | reg << 4).try_into().unwrap());
+                }
+            }
+
+            #[test]
+            fn prefix() {
+                assert_eq!(Prefix, 0xCB.try_into().unwrap());
+            }
+
+            #[test]
+            fn ldh_c_a() {
+                assert_eq!(LdhCA, 0xE2.try_into().unwrap());
+            }
+
+            #[test]
+            fn ldh_imm8_a() {
+                assert_eq!(LdhImm8A, 0xE0.try_into().unwrap());
+            }
+
+            #[test]
+            fn ld_imm16_a() {
+                assert_eq!(LdImm16A, 0xEA.try_into().unwrap());
+            }
+
+            #[test]
+            fn ld_a_c() {
+                assert_eq!(LdhAC, 0xF2.try_into().unwrap());
+            }
+
+            #[test]
+            fn ldh_a_imm8() {
+                assert_eq!(LdhAImm8, 0xF0.try_into().unwrap());
+            }
+
+            #[test]
+            fn ld_a_imm16() {
+                assert_eq!(LdAImm16, 0xFA.try_into().unwrap());
+            }
+
+            #[test]
+            fn add_sp_imm8() {
+                assert_eq!(AddSPImm8, 0xE8.try_into().unwrap());
+            }
+
+            #[test]
+            fn ld_hl_sp_imm8() {
+                assert_eq!(LdHLSPImm8, 0xF8.try_into().unwrap());
+            }
+
+            #[test]
+            fn ld_sp_hl() {
+                assert_eq!(LdSPHL, 0xF9.try_into().unwrap());
+            }
+
+            #[test]
+            fn di() {
+                assert_eq!(DI, 0xF3.try_into().unwrap());
+            }
+
+            #[test]
+            fn ei() {
+                assert_eq!(EI, 0xFB.try_into().unwrap());
+            }
+        }
+    }
+    mod instruction_cb {
+        use super::InstructionCB::*;
+
+        #[test]
+        fn rlc_r8() {
+            for operand in 0..8 {
+                assert_eq!(RLCR8 { operand }, (0x00 | operand).try_into().unwrap());
+            }
+        }
+
+        #[test]
+        fn rrc_r8() {
+            for operand in 0..8 {
+                assert_eq!(RRCR8 { operand }, (0x08 | operand).try_into().unwrap());
+            }
+        }
+
+        #[test]
+        fn rl_r8() {
+            for operand in 0..8 {
+                assert_eq!(RLR8 { operand }, (0x10 | operand).try_into().unwrap());
+            }
+        }
+
+        #[test]
+        fn rr_r8() {
+            for operand in 0..8 {
+                assert_eq!(RRR8 { operand }, (0x18 | operand).try_into().unwrap());
+            }
+        }
+
+        #[test]
+        fn sla_r8() {
+            for operand in 0..8 {
+                assert_eq!(SLAR8 { operand }, (0x20 | operand).try_into().unwrap());
+            }
+        }
+
+        #[test]
+        fn sra_r8() {
+            for operand in 0..8 {
+                assert_eq!(SRAR8 { operand }, (0x28 | operand).try_into().unwrap());
+            }
+        }
+
+        #[test]
+        fn swap_r8() {
+            for operand in 0..8 {
+                assert_eq!(SwapR8 { operand }, (0x30 | operand).try_into().unwrap());
+            }
+        }
+
+        #[test]
+        fn srl_r8() {
+            for operand in 0..8 {
+                assert_eq!(SRLR8 { operand }, (0x38 | operand).try_into().unwrap());
+            }
+        }
+
+        #[test]
+        fn bit_b3_r8() {
+            for bit_index in 0..8 {
+                for operand in 0..8 {
+                    assert_eq!(
+                        BitB3R8 { bit_index, operand },
+                        (0x40 | (bit_index << 3) | operand).try_into().unwrap()
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn res_b3_r8() {
+            for bit_index in 0..8 {
+                for operand in 0..8 {
+                    assert_eq!(
+                        ResB3R8 { bit_index, operand },
+                        (0x80 | (bit_index << 3) | operand).try_into().unwrap()
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn set_b3_r8() {
+            for bit_index in 0..8 {
+                for operand in 0..8 {
+                    assert_eq!(
+                        SetB3R8 { bit_index, operand },
+                        (0xC0 | (bit_index << 3) | operand).try_into().unwrap()
+                    );
+                }
+            }
+        }
     }
 }
