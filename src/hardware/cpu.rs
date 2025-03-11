@@ -7,17 +7,35 @@ use log::{debug, error};
 pub struct Cpu {
     reg: Registers,
     mem: Memory,
+    ime: bool,
+    ime_next: bool,
 }
 
 impl Cpu {
+    pub fn new() -> Self {
+        let mut ret = Cpu {
+            reg: Registers::default(),
+            mem: Memory::new(),
+            ime: false,
+            ime_next: false,
+        };
+        ret.reg.set_pc(0x100);
+        ret
+    }
     pub fn new_with_cart(path: &str) -> Self {
         let cart = Cartridge::new(path);
         // let cart = Cartridge::new("./roms/tloz.gb");
         let mut ret = Cpu {
             reg: Registers::default(),
             mem: Memory::new_with_cart(cart),
+            ime: false,
+            ime_next: false,
         };
         ret.reg.set_pc(0x100);
+        // for i in 0x100..=0x14F {
+        //     debug!("adress {:#06X}", i);
+        //     debug!("byte {:#010b} aka {:#04X}", ret.mem[i], ret.mem[i]);
+        // }
         ret
     }
     fn pc(&self) -> u16 {
@@ -28,6 +46,9 @@ impl Cpu {
     }
     fn inc_pc(&mut self) {
         self.reg.set_pc(self.pc() + 1);
+    }
+    fn dec_pc(&mut self) {
+        self.reg.set_pc(self.pc() - 1);
     }
     fn inc_sp(&mut self) {
         self.reg.set_sp(self.sp() + 1);
@@ -58,20 +79,22 @@ impl Cpu {
         (msb as u16) << 8 | (lsb as u16)
     }
     fn resolve_opcode(&mut self, byte: u8) -> Instruction {
-        let opcode = Instruction::from_byte(byte);
+        let opcode = byte.try_into();
         match opcode {
-            Some(code) => code,
-            None => {
-                panic!("Unrecognized code: {:#010b}", byte);
+            Ok(code) => code,
+            Err(e) => {
+                panic!("{:?}", e);
+                // panic!("Unrecognized code: {:#010b}", byte);
             }
         }
     }
     fn resolve_cb_opcode(&mut self, byte: u8) -> InstructionCB {
-        let opcode = InstructionCB::from_byte(byte);
+        // let opcode = InstructionCB::from_byte(byte);
+        let opcode = byte.try_into();
         match opcode {
-            Some(code) => code,
-            None => {
-                panic!("Unrecognized code: {:#010b}", byte);
+            Ok(code) => code,
+            Err(e) => {
+                panic!("{:?}", e);
             }
         }
     }
@@ -120,7 +143,7 @@ impl Cpu {
 
             // block 1
             Halt => self.halt(),
-            LDR8R8 { dest, source } => self.ld_r8_r8(dest, source),
+            LdR8R8 { dest, source } => self.ld_r8_r8(dest, source),
 
             // block 2
             AddAR8 { operand } => self.add_a_r8(operand),
@@ -149,6 +172,7 @@ impl Cpu {
             JpHL => self.jp_hl(),
             CallCondImm16 { cond } => self.call_cond_imm16(cond),
             CallImm16 => self.call_imm16(),
+            RstTgt3 { target } => self.rst_tgt3(target),
             PopR16Stk { reg } => self.pop_r16_stk(reg),
             PushR16Stk { reg } => self.push_r16_stk(reg),
             Prefix => self.prefix(),
@@ -163,16 +187,13 @@ impl Cpu {
             LdSPHL => self.ld_sp_hl(),
             DI => self.di(),
             EI => self.ei(),
-
-            // block 4
-            _ => {
-                println!("Not implemented: {:?}", instruction);
-            }
+            Data { byte } => error!("Instruction {:#010b} is invalid!", byte),
         };
     }
     pub fn step(&mut self) {
         let byte = self.fetch_byte();
         let opcode = self.resolve_opcode(byte);
+        debug!("{:#06X}: {:#010b} -> {:?}", self.pc(), byte, opcode);
         self.execute_opcode(opcode);
         self.inc_pc();
     }
@@ -232,9 +253,7 @@ impl Cpu {
 
 // block 0 of instructions
 impl Cpu {
-    fn nop(&self) {
-        println!("Running NOP");
-    }
+    fn nop(&self) {}
 
     fn ld_r16_imm16(&mut self, dest: u8) {
         let val = self.imm16();
@@ -242,12 +261,15 @@ impl Cpu {
     }
 
     fn ld_r16mem_a(&mut self, dest: u8) {
-        let location = self.reg.get_r16(dest).expect("Invalid r16 register") as usize;
+        let location = self.reg.get_r16mem(dest).expect("Invalid r16mem register") as usize;
         self.mem[location] = self.reg.a();
     }
 
     fn ld_a_r16mem(&mut self, source: u8) {
-        let location = self.reg.get_r16(source).expect("Invalid r16 register") as usize;
+        let location = self
+            .reg
+            .get_r16mem(source)
+            .expect("Invalid r16mem register") as usize;
         self.reg.set_a(self.mem[location]);
     }
 
@@ -315,7 +337,8 @@ impl Cpu {
     fn dec_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
 
-        let res = val - 1;
+        // let res = val - 1;
+        let res = val.wrapping_sub(1);
         self.reg.set_r8(res, operand);
 
         let mut flags = 0x00;
@@ -454,9 +477,10 @@ impl Cpu {
         let relative_value = self.imm8();
         self.reg.set_pc(self.pc() + relative_value as u16);
     }
-    fn jr_cond_imm8(&mut self, condition: u8) {
+    fn jr_cond_imm8(&mut self, _condition: u8) {
+        let relative_value = self.imm8();
         if self.reg.f() & flags::Z == flags::Z {
-            self.jr_imm8();
+            self.reg.set_pc(self.pc() + relative_value as u16);
         }
     }
     fn stop(&mut self) {
@@ -771,7 +795,7 @@ impl Cpu {
     fn cp_a_imm8(&mut self) {
         let a_val = self.reg.a();
         let val = self.imm8();
-        let result = a_val - val;
+        let result = a_val.wrapping_sub(val);
 
         let mut flags = 0x00;
         if result == 0 {
@@ -786,7 +810,7 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn ret_cond(&mut self, cond: u8) {
+    fn ret_cond(&mut self, _cond: u8) {
         if self.reg.f() & flags::Z == 0 {
             return;
         }
@@ -802,7 +826,7 @@ impl Cpu {
         self.ei();
         self.ret();
     }
-    fn jp_cond_imm16(&mut self, cond: u8) {
+    fn jp_cond_imm16(&mut self, _cond: u8) {
         if self.reg.f() & flags::Z == flags::Z {
             self.jp_imm16();
         }
@@ -811,12 +835,14 @@ impl Cpu {
         let dest_addr = self.imm16();
         debug!("Jumping to {:#018b} aka {:#06X}", dest_addr, dest_addr);
         self.reg.set_pc(dest_addr);
+        self.dec_pc();
     }
     fn jp_hl(&mut self) {
         let hl = self.reg.hl();
         self.reg.set_pc(hl);
+        self.dec_pc();
     }
-    fn call_cond_imm16(&mut self, cond: u8) {
+    fn call_cond_imm16(&mut self, _cond: u8) {
         let call_addr = self.imm16();
         if self.reg.f() & flags::Z == flags::Z {
             self.dec_sp();
@@ -844,7 +870,7 @@ impl Cpu {
         self.reg.set_pc(call_addr);
     }
     fn rst_tgt3(&mut self, target: u8) {
-        let call_addr = (target as u16) * 8;
+        let call_addr = (target as u16) << 8;
         if self.reg.f() & flags::Z == flags::Z {
             self.dec_sp();
             let sp = self.sp() as usize;
@@ -859,10 +885,10 @@ impl Cpu {
     }
     fn pop_r16_stk(&mut self, reg: u8) {
         let val: u16 = self.pop_stack();
-        self.reg.set_r16(val, reg);
+        self.reg.set_r16stk(val, reg);
     }
     fn push_r16_stk(&mut self, reg: u8) {
-        let val: u16 = self.reg.get_r16(reg).expect("Invalid r16 register");
+        let val: u16 = self.reg.get_r16stk(reg).expect("Invalid r16 register");
 
         self.dec_sp();
         let sp = self.sp() as usize;
@@ -939,6 +965,7 @@ impl Cpu {
     }
     fn di(&mut self) {
         debug!("{:?}", self.fetch_byte());
+        self.ime = false;
     }
     fn ei(&mut self) {
         debug!("{:?}", self.fetch_byte());
@@ -1118,49 +1145,159 @@ mod test {
     }
 
     mod block_0 {
+        use super::super::Instruction;
+        use super::super::Registers;
+        use super::Cpu;
+
+        const DEFAULT_FLAG: u8 = 0xC0;
+
+        fn setup(instructions: Vec<Instruction>, flags: Option<u8>) -> Cpu {
+            let mut cpu = Cpu::new();
+            if let Some(flag_bit) = flags {
+                cpu.reg.set_f(flag_bit)
+            } else {
+                cpu.reg.set_f(DEFAULT_FLAG);
+            }
+            for i in 0..instructions.len() {
+                cpu.mem[0x100 + i] = u8::from(instructions[i]);
+            }
+            // cpu.mem[0x100] = u8::from(Instruction::Nop);
+            cpu
+        }
+
         #[test]
-        fn test_nop() {}
+        fn test_nop() {
+            let mut cpu = setup(vec![Instruction::Nop], None);
+            cpu.step();
+
+            let mut result_reg = Registers::default();
+            result_reg.set_pc(0x101);
+            result_reg.set_f(DEFAULT_FLAG);
+
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg, result_reg);
+        }
         #[test]
-        fn test_ld_r16_imm16() {}
-        #[test]
-        fn test_ld_r16mem_a() {}
-        #[test]
-        fn test_ld_a_r16mem() {}
-        #[test]
-        fn test_ld_imm16_sp() {}
-        #[test]
-        fn test_inc_r16() {}
-        #[test]
-        fn test_dec_r16() {}
-        #[test]
-        fn test_add_hl_r16() {}
-        #[test]
-        fn test_inc_r8() {}
-        #[test]
-        fn test_dec_r8() {}
-        #[test]
-        fn test_ld_r8_imm8() {}
-        #[test]
-        fn test_rlca() {}
-        #[test]
-        fn test_rrca() {}
-        #[test]
-        fn test_rla() {}
-        #[test]
-        fn test_rra() {}
-        #[test]
-        fn test_daa() {}
-        #[test]
-        fn test_cpl() {}
-        #[test]
-        fn test_scf() {}
-        #[test]
-        fn test_ccf() {}
-        #[test]
-        fn test_jr_imm8() {}
-        #[test]
-        fn test_jr_cond_imm8() {}
-        #[test]
-        fn test_stop() {}
+        fn test_ld_r16_imm16() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::LdR16Imm16 { dest: 0 },
+                    Instruction::Data { byte: 0b_0000_1111 },
+                    Instruction::Data { byte: 0b_1010_1010 },
+                    Instruction::LdR16Imm16 { dest: 1 },
+                    Instruction::Data { byte: 0b_1111_0000 },
+                    Instruction::Data { byte: 0b_0101_0101 },
+                    Instruction::LdR16Imm16 { dest: 2 },
+                    Instruction::Data { byte: 0b_1100_0011 },
+                    Instruction::Data { byte: 0b_0011_1100 },
+                    Instruction::LdR16Imm16 { dest: 3 },
+                    Instruction::Data { byte: 0b_1110_0111 },
+                    Instruction::Data { byte: 0b_1000_0001 },
+                ],
+                None,
+            );
+
+            cpu.step();
+            let mut result_reg = Registers::default();
+            result_reg.set_pc(0x103);
+            result_reg.set_f(DEFAULT_FLAG);
+            result_reg.set_bc(0b_1010_1010_0000_1111);
+            assert_eq!(cpu.reg, result_reg);
+
+            cpu.step();
+            result_reg.set_pc(0x106);
+            result_reg.set_de(0b_0101_0101_1111_0000);
+            assert_eq!(cpu.reg, result_reg);
+
+            cpu.step();
+            result_reg.set_pc(0x109);
+            result_reg.set_hl(0b_0011_1100_1100_0011);
+            assert_eq!(cpu.reg, result_reg);
+
+            cpu.step();
+            result_reg.set_pc(0x10C);
+            result_reg.set_sp(0b_1000_0001_1110_0111);
+            assert_eq!(cpu.reg, result_reg);
+        }
+        // #[test]
+        // fn test_ld_r16mem_a() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_ld_a_r16mem() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_ld_imm16_sp() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_inc_r16() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_dec_r16() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_add_hl_r16() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_inc_r8() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_dec_r8() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_ld_r8_imm8() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_rlca() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_rrca() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_rla() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_rra() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_daa() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_cpl() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_scf() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_ccf() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_jr_imm8() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_jr_cond_imm8() {
+        //     assert!(false)
+        // }
+        // #[test]
+        // fn test_stop() {
+        //     assert!(false)
+        // }
     }
 }
