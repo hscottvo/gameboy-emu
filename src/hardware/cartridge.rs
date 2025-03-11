@@ -1,3 +1,4 @@
+use log::debug;
 use std::fs::read;
 use std::ops::Index;
 
@@ -14,7 +15,9 @@ impl Cartridge {
             Err(e) => panic!("{:?}", e), //{println!("{:?}", e); Vec::new()}
         };
 
-        Cartridge { data: data }
+        // debug!("Read {:} bytes", data.len());
+        debug!("Read {:#06X} bytes", data.len());
+        Cartridge { data }
     }
 
     pub fn mbc_type(&self) -> &u8 {

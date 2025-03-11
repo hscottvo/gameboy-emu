@@ -7,6 +7,7 @@ use sdl3::pixels::Color;
 use std::time::Duration;
 
 fn main() {
+    env_logger::init();
     let sdl_context = sdl3::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
@@ -26,12 +27,9 @@ fn main() {
 
     let mut i = 0;
     let mut cpu = Cpu::new_with_cart("./roms/tetris.gb");
-    cpu.step();
-    cpu.step();
-    cpu.step();
-    cpu.step();
 
     'running: loop {
+        cpu.step();
         i = (i + 1) % 255;
         canvas.set_draw_color(Color::RGB(i, 64, 255 - i));
         canvas.clear();

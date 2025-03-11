@@ -2,6 +2,7 @@ use super::cartridge::Cartridge;
 use super::instructions::{Instruction, InstructionCB};
 use super::memory::Memory;
 use super::registers::{flags, Registers};
+use log::{debug, error};
 
 pub struct Cpu {
     reg: Registers,
@@ -459,12 +460,14 @@ impl Cpu {
         }
     }
     fn stop(&mut self) {
+        debug!("{:?}", self.fetch_byte());
         todo!()
     }
 }
 impl Cpu {
     // block 1
     fn halt(&mut self) {
+        debug!("{:?}", self.fetch_byte());
         todo!()
     }
     fn ld_r8_r8(&mut self, dest: u8, source: u8) {
@@ -580,6 +583,7 @@ impl Cpu {
     fn xor_a_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
         let a_val = self.reg.a();
+        // debug!("Before: {:?}", self.reg);
         let result = val ^ a_val;
 
         self.reg.set_a(result);
@@ -590,6 +594,7 @@ impl Cpu {
         }
         // N, H, and C is 0
         self.reg.set_f(flags);
+        // debug!("After: {:?}", self.reg);
     }
     fn or_a_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
@@ -804,6 +809,7 @@ impl Cpu {
     }
     fn jp_imm16(&mut self) {
         let dest_addr = self.imm16();
+        debug!("Jumping to {:#018b} aka {:#06X}", dest_addr, dest_addr);
         self.reg.set_pc(dest_addr);
     }
     fn jp_hl(&mut self) {
@@ -932,9 +938,10 @@ impl Cpu {
         self.reg.set_sp(val);
     }
     fn di(&mut self) {
-        todo!()
+        debug!("{:?}", self.fetch_byte());
     }
     fn ei(&mut self) {
+        debug!("{:?}", self.fetch_byte());
         todo!()
     }
 }
