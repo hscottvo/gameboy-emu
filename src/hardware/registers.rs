@@ -1,4 +1,4 @@
-use log::{error, info};
+use log::error;
 // https://gbdev.io/pandocs/CPU_Registers_and_Flags.html
 pub mod flags {
     pub const Z: u8 = 0b_1000_0000;
