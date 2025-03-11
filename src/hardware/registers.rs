@@ -6,7 +6,7 @@ pub mod flags {
     pub const H: u8 = 0b_0010_0000;
     pub const C: u8 = 0b_0001_0000;
 }
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, PartialOrd)]
 pub struct Registers {
     // registers: they are 16-bit registers that can be read 1 or 2 bytes at a time
     a: u8,
@@ -17,37 +17,72 @@ pub struct Registers {
     f: u8,
     h: u8,
     l: u8,
-    sp: u16,
     pc: u16,
+    sp: u16,
 }
 
 // getters
 impl Registers {
+    pub fn new() -> Self {
+        Registers {
+            a: 0x01,
+            b: 0x00,
+            c: 0x13,
+            d: 0x00,
+            e: 0xD8,
+            f: 0x80,
+            h: 0x01,
+            l: 0x4D,
+            pc: 0x0100,
+            sp: 0xFFFE,
+        }
+    }
     pub fn get_r8(&self, reg: u8) -> Result<RegResult, String> {
+        use R8Index::*;
         use RegResult::*;
         if reg == 6 {
             return Ok(Defer);
         }
         let index: Result<R8Index, String> = reg.try_into();
         match index {
-            Ok(R8Index::B) => Ok(ReturnU8 { val: self.b() }),
-            Ok(R8Index::C) => Ok(ReturnU8 { val: self.c() }),
-            Ok(R8Index::D) => Ok(ReturnU8 { val: self.d() }),
-            Ok(R8Index::E) => Ok(ReturnU8 { val: self.e() }),
-            Ok(R8Index::H) => Ok(ReturnU8 { val: self.h() }),
-            Ok(R8Index::L) => Ok(ReturnU8 { val: self.l() }),
-            Ok(R8Index::A) => Ok(ReturnU8 { val: self.a() }),
+            Ok(B) => Ok(ReturnU8 { val: self.b() }),
+            Ok(C) => Ok(ReturnU8 { val: self.c() }),
+            Ok(D) => Ok(ReturnU8 { val: self.d() }),
+            Ok(E) => Ok(ReturnU8 { val: self.e() }),
+            Ok(H) => Ok(ReturnU8 { val: self.h() }),
+            Ok(L) => Ok(ReturnU8 { val: self.l() }),
+            Ok(A) => Ok(ReturnU8 { val: self.a() }),
             _ => Err(format!("Invalid R16 index {}", reg)),
         }
     }
     pub fn get_r16(&self, reg: u8) -> Result<u16, String> {
+        use R16Index::*;
         let index: Result<R16Index, String> = reg.try_into();
         match index {
-            Ok(R16Index::BC) => Ok(self.bc()),
-            Ok(R16Index::DE) => Ok(self.de()),
-            Ok(R16Index::HL) => Ok(self.hl()),
-            Ok(R16Index::SP) => Ok(self.sp()),
+            Ok(BC) => Ok(self.bc()),
+            Ok(DE) => Ok(self.de()),
+            Ok(HL) => Ok(self.hl()),
+            Ok(SP) => Ok(self.sp()),
             _ => Err(format!("Invalid R16 index {}", reg)),
+        }
+    }
+    pub fn get_r16stk(&self, reg: u8) -> Result<u16, String> {
+        use R16StkIndex::*;
+        let index: Result<R16StkIndex, String> = reg.try_into();
+        match index {
+            Ok(BC) | Ok(DE) | Ok(HL) => self.get_r16(reg),
+            Ok(AF) => Ok(self.af()),
+            _ => Err(format!("Invalid R16Stk index {}", reg)),
+        }
+    }
+    pub fn get_r16mem(&mut self, reg: u8) -> Result<u16, String> {
+        use R16MemIndex::*;
+        let index: Result<R16MemIndex, String> = reg.try_into();
+        match index {
+            Ok(BC) | Ok(DE) => self.get_r16(reg),
+            Ok(HLPlus) => Ok(self.hl_plus()),
+            Ok(HLMinus) => Ok(self.hl_minus()),
+            _ => Err(format!("Invalid R16Mem index {}", reg)),
         }
     }
     pub fn a(&self) -> u8 {
@@ -86,11 +121,133 @@ impl Registers {
     pub fn hl(&self) -> u16 {
         ((self.h as u16) << 8) + self.l as u16
     }
+    pub fn hl_plus(&mut self) -> u16 {
+        let ret = ((self.h as u16) << 8) + self.l as u16;
+        self.set_hl(self.hl().wrapping_add(1));
+        ret
+    }
+    pub fn hl_minus(&mut self) -> u16 {
+        let ret = ((self.h as u16) << 8) + self.l as u16;
+        self.set_hl(self.hl().wrapping_sub(1));
+        ret
+    }
     pub fn sp(&self) -> u16 {
         self.sp
     }
     pub fn pc(&self) -> u16 {
         self.pc
+    }
+}
+
+// setters
+impl Registers {
+    pub fn set_r8(&mut self, val: u8, dest: u8) -> RegResult {
+        if dest == 6 {
+            return RegResult::Defer;
+        }
+        match dest {
+            0 => self.set_b(val),
+            1 => self.set_c(val),
+            2 => self.set_d(val),
+            3 => self.set_e(val),
+            4 => self.set_h(val),
+            5 => self.set_l(val),
+            7 => self.set_a(val),
+            // _ => panic!("Invalid register R8"),
+            _ => error!("Invalid R8 register {}", dest),
+        };
+        RegResult::Success
+    }
+    pub fn set_r16(&mut self, val: u16, dest: u8) -> RegResult {
+        use R16Index::*;
+        let index: Result<R16Index, String> = dest.try_into();
+        match index {
+            Ok(BC) => {
+                self.set_bc(val);
+                RegResult::Success
+            }
+            Ok(DE) => {
+                self.set_de(val);
+                RegResult::Success
+            }
+            Ok(HL) => {
+                self.set_hl(val);
+                RegResult::Success
+            }
+            Ok(SP) => {
+                self.set_sp(val);
+                RegResult::Success
+            }
+            Err(e) => {
+                error!("{}", e);
+                RegResult::Failure
+            }
+        };
+        RegResult::Success
+    }
+    pub fn set_r16stk(&mut self, val: u16, dest: u8) -> RegResult {
+        use R16StkIndex::*;
+        let index: Result<R16StkIndex, String> = dest.try_into();
+        match index {
+            Ok(BC) | Ok(DE) | Ok(HL) => {
+                self.set_r16(val, dest);
+                RegResult::Success
+            }
+            Ok(AF) => {
+                self.set_af(val);
+                RegResult::Success
+            }
+            Err(e) => {
+                error!("{}", e);
+                RegResult::Failure
+            }
+        }
+    }
+    pub fn set_a(&mut self, value: u8) {
+        self.a = value;
+    }
+    pub fn set_b(&mut self, value: u8) {
+        self.b = value;
+    }
+    pub fn set_c(&mut self, value: u8) {
+        self.c = value;
+    }
+    pub fn set_d(&mut self, value: u8) {
+        self.d = value;
+    }
+    pub fn set_e(&mut self, value: u8) {
+        self.e = value;
+    }
+    pub fn set_f(&mut self, value: u8) {
+        self.f = value;
+    }
+    pub fn set_h(&mut self, value: u8) {
+        self.h = value;
+    }
+    pub fn set_l(&mut self, value: u8) {
+        self.l = value;
+    }
+    pub fn set_af(&mut self, value: u16) {
+        self.set_a((value >> 8) as u8);
+        self.set_f(value as u8);
+    }
+    pub fn set_bc(&mut self, value: u16) {
+        self.set_b((value >> 8) as u8);
+        self.set_c(value as u8);
+    }
+    pub fn set_de(&mut self, value: u16) {
+        self.set_d((value >> 8) as u8);
+        self.set_e(value as u8);
+    }
+    pub fn set_hl(&mut self, value: u16) {
+        self.set_h((value >> 8) as u8);
+        self.set_l(value as u8);
+    }
+    pub fn set_sp(&mut self, value: u16) {
+        self.sp = value
+    }
+    pub fn set_pc(&mut self, value: u16) {
+        self.pc = value
     }
 }
 
@@ -149,97 +306,63 @@ impl TryFrom<u8> for R16Index {
     }
 }
 
-// setters
-impl Registers {
-    pub fn set_r8(&mut self, val: u8, dest: u8) -> RegResult {
-        if dest == 6 {
-            return RegResult::Defer;
+enum R16StkIndex {
+    BC,
+    DE,
+    HL,
+    AF,
+}
+impl TryFrom<u8> for R16StkIndex {
+    type Error = String;
+    fn try_from(reg: u8) -> Result<R16StkIndex, String> {
+        use R16StkIndex::*;
+        match reg {
+            0 => Ok(BC),
+            1 => Ok(DE),
+            2 => Ok(HL),
+            3 => Ok(AF),
+            _ => Err(format!("Invalid R16Stk index {}", reg)),
         }
-        match dest {
-            0 => self.set_b(val),
-            1 => self.set_c(val),
-            2 => self.set_d(val),
-            3 => self.set_e(val),
-            4 => self.set_h(val),
-            5 => self.set_l(val),
-            7 => self.set_a(val),
-            // _ => panic!("Invalid register R8"),
-            _ => error!("Invalid R8 register {}", dest),
-        };
-        RegResult::Success
     }
-    pub fn set_r16(&mut self, val: u16, dest: u8) -> RegResult {
-        // todo!()
-        let index: Result<R16Index, String> = dest.try_into();
-        match index {
-            Ok(R16Index::BC) => {
-                self.set_bc(val);
-                RegResult::Success
-            }
-            Ok(R16Index::DE) => {
-                self.set_de(val);
-                RegResult::Success
-            }
-            Ok(R16Index::HL) => {
-                self.set_hl(val);
-                RegResult::Success
-            }
-            Ok(R16Index::SP) => {
-                self.set_sp(val);
-                RegResult::Success
-            }
-            Err(e) => {
-                error!("{}", e);
-                RegResult::Failure
-            }
-        };
-        RegResult::Success
+}
+
+enum R16MemIndex {
+    BC,
+    DE,
+    HLPlus,
+    HLMinus,
+}
+impl TryFrom<u8> for R16MemIndex {
+    type Error = String;
+    fn try_from(reg: u8) -> Result<R16MemIndex, String> {
+        use R16MemIndex::*;
+        match reg {
+            0 => Ok(BC),
+            1 => Ok(DE),
+            2 => Ok(HLPlus),
+            3 => Ok(HLMinus),
+            _ => Err(format!("Invalid R16Mem index {}", reg)),
+        }
     }
-    pub fn set_a(&mut self, value: u8) {
-        self.a = value;
-    }
-    pub fn set_b(&mut self, value: u8) {
-        self.b = value;
-    }
-    pub fn set_c(&mut self, value: u8) {
-        self.c = value;
-    }
-    pub fn set_d(&mut self, value: u8) {
-        self.d = value;
-    }
-    pub fn set_e(&mut self, value: u8) {
-        self.e = value;
-    }
-    pub fn set_f(&mut self, value: u8) {
-        self.f = value;
-    }
-    pub fn set_h(&mut self, value: u8) {
-        self.h = value;
-    }
-    pub fn set_l(&mut self, value: u8) {
-        self.l = value;
-    }
-    pub fn set_af(&mut self, value: u16) {
-        self.set_a((value >> 8) as u8);
-        self.set_f(value as u8);
-    }
-    pub fn set_bc(&mut self, value: u16) {
-        self.set_b((value >> 8) as u8);
-        self.set_c(value as u8);
-    }
-    pub fn set_de(&mut self, value: u16) {
-        self.set_d((value >> 8) as u8);
-        self.set_e(value as u8);
-    }
-    pub fn set_hl(&mut self, value: u16) {
-        self.set_h((value >> 8) as u8);
-        self.set_l(value as u8);
-    }
-    pub fn set_sp(&mut self, value: u16) {
-        self.sp = value
-    }
-    pub fn set_pc(&mut self, value: u16) {
-        self.pc = value
+}
+
+enum Cond {
+    NZ,
+    Z,
+    NC,
+    C,
+}
+impl TryFrom<u8> for Cond {
+    type Error = String;
+    fn try_from(reg: u8) -> Result<Cond, String> {
+        use Cond::*;
+        match reg {
+            0 => Ok(NZ),
+            1 => Ok(Z),
+            2 => Ok(NC),
+            3 => Ok(C),
+            _ => Err(format!("Invalid condition index {}", reg)),
+        }
     }
 }
 
