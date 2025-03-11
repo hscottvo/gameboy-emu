@@ -408,6 +408,7 @@ dependencies = [
 name = "gameboy_hw"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
  "js-sys",
  "log",
  "sdl3",
