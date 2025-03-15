@@ -6,7 +6,7 @@ pub mod flags {
     pub const H: u8 = 0b_0010_0000;
     pub const C: u8 = 0b_0001_0000;
 }
-#[derive(Debug, Default, PartialEq, PartialOrd)]
+#[derive(Debug, Default, PartialEq, PartialOrd, Copy, Clone)]
 pub struct Registers {
     // registers: they are 16-bit registers that can be read 1 or 2 bytes at a time
     a: u8,
@@ -416,5 +416,29 @@ mod tests {
         reg.set_a(0xF9);
         reg.set_f(0x9F);
         assert_eq!(reg.af(), 0xF99F);
+    }
+
+    #[test]
+    fn get_r16mem() {
+        let mut reg: Registers = Registers::default();
+
+        reg.set_bc(0x3982);
+        assert_eq!(reg.get_r16mem(0), Ok(0x3982));
+    }
+    #[test]
+    fn hl_plus() {
+        let mut reg = Registers::default();
+        reg.set_hl(0x1233);
+        let val = reg.hl_plus();
+        assert_eq!(val, 0x1233);
+        assert_eq!(reg.hl(), 0x1234);
+    }
+    #[test]
+    fn hl_minus() {
+        let mut reg = Registers::default();
+        reg.set_hl(0x1233);
+        let val = reg.hl_minus();
+        assert_eq!(val, 0x1233);
+        assert_eq!(reg.hl(), 0x1232);
     }
 }
