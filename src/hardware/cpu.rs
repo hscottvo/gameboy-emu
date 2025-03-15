@@ -59,17 +59,25 @@ impl Cpu {
     fn fetch_byte(&self) -> u8 {
         self.mem[self.pc() as usize]
     }
-    fn imm8(&mut self) -> u8 {
+    fn imm8_unsigned(&mut self) -> u8 {
         self.inc_pc();
         self.fetch_byte()
     }
-    fn imm16(&mut self) -> u16 {
+    fn imm16_unsigned(&mut self) -> u16 {
         self.inc_pc();
         let lsb = self.fetch_byte() as u16;
         self.inc_pc();
         let msb = self.fetch_byte() as u16;
+        debug!("Got {:#06X}", msb << 8 | lsb);
         msb << 8 | lsb
-        // ((msb as u16) << 8) | lsb) as u16
+    }
+    fn imm8_signed(&mut self) -> i8 {
+        self.inc_pc();
+        let byte = self.fetch_byte();
+        // neg
+        // -6 is 1010
+        // to get 6: -1 -> 1001, then not -> 0110
+        Self::i8_from_u8(byte)
     }
     fn pop_stack(&mut self) -> u16 {
         let lsb = self.mem[self.sp() as usize];
@@ -78,7 +86,7 @@ impl Cpu {
         self.inc_sp();
         (msb as u16) << 8 | (lsb as u16)
     }
-    fn resolve_opcode(&mut self, byte: u8) -> Instruction {
+    fn resolve_opcode(&self, byte: u8) -> Instruction {
         let opcode = byte.try_into();
         match opcode {
             Ok(code) => code,
@@ -138,7 +146,7 @@ impl Cpu {
             SCF => self.scf(),
             CCF => self.ccf(),
             JRImm8 => self.jr_imm8(),
-            JRCondImm8 { condition } => self.jr_cond_imm8(condition),
+            JRCondImm8 { cond } => self.jr_cond_imm8(cond),
             Stop => self.stop(),
 
             // block 1
@@ -182,8 +190,8 @@ impl Cpu {
             LdhAC => self.ldh_a_c(),
             LdhAImm8 => self.ldh_a_imm8(),
             LdAImm16 => self.ld_a_imm16(),
-            AddSPImm8 => self.add_sp_imm8(),
-            LdHLSPImm8 => self.ld_hl_sp_imm8(),
+            AddSPImm8 => self.add_sp_e8(),
+            LdHLSPImm8 => self.ld_hl_sp_e8(),
             LdSPHL => self.ld_sp_hl(),
             DI => self.di(),
             EI => self.ei(),
@@ -193,7 +201,13 @@ impl Cpu {
     pub fn step(&mut self) {
         let byte = self.fetch_byte();
         let opcode = self.resolve_opcode(byte);
-        debug!("{:#06X}: {:#010b} -> {:?}", self.pc(), byte, opcode);
+        debug!(
+            "{:#06X}: {:#010b} aka {:#04X} -> {:?}",
+            self.pc(),
+            byte,
+            byte,
+            opcode
+        );
         self.execute_opcode(opcode);
         self.inc_pc();
     }
@@ -207,35 +221,95 @@ impl Cpu {
     fn preserve_flag(curr_flags: u8, preserve_flag: u8) -> u8 {
         curr_flags & preserve_flag
     }
-    fn add_carry_flag_u8(vals: Vec<u8>, bit: u8) -> bool {
-        // overflow from bit 3: want masks to be 0b_0001_0000 and 0b_1111
-        let carry_mask = 0x1 << (bit + 1);
-        let addition_mask = 0xFF >> (8 - (bit + 1));
-        let res: u16 = vals
-            .into_iter()
-            .map(|val| (val & addition_mask) as u16)
-            .sum();
-        res & carry_mask == carry_mask
+    // fn add_carry_flag_u8(vals: Vec<u8>, bit: u8) -> bool {
+    //     // overflow from bit 3: want masks to be 0b_0001_0000 and 0b_1111
+    //     let carry_mask = 0x1 << (bit + 1);
+    //     let addition_mask = 0xFF >> (8 - (bit + 1));
+    //     let res: u16 = vals
+    //         .into_iter()
+    //         .map(|val| (val & addition_mask) as u16)
+    //         .sum();
+    //     res & carry_mask == carry_mask
+    // }
+    // fn add_carry_flag_u16(vals: Vec<u16>, bit: u8) -> bool {
+    //     let carry_mask: u32 = 0x1 << (bit + 1);
+    //     let addition_mask = 0xFFFF >> (16 - (bit + 1));
+    //     let res: u32 = vals
+    //         .into_iter()
+    //         .map(|val| (val & addition_mask) as u32)
+    //         .sum();
+    //     res & carry_mask == carry_mask
+    // }
+    fn half_carry_add_8(val: u8, add: u8) -> bool {
+        (val & 0xF) + (add & 0xF) > 0xF
     }
-    fn add_carry_flag_u16(vals: Vec<u16>, bit: u8) -> bool {
-        let carry_mask = 0x1 << (bit + 1);
-        let addition_mask = 0xFFFF >> (16 - (bit + 1));
-        let res: u16 = vals
-            .into_iter()
-            .map(|val| (val & addition_mask) as u16)
-            .sum();
-        res & carry_mask == carry_mask
+    fn carry_add_8(val: u8, add: u8) -> bool {
+        (val as u16) + (add as u16) > 0xFF
     }
-    fn sub_carry_flag_u8(mut left: u8, right: Vec<u8>, bit: u8) -> bool {
-        let mask = 0xFF >> (8 - bit);
-        for i in right.iter() {
-            if i & mask > left & mask {
-                return true;
-            }
-            left -= i;
+    fn half_carry_adc_8(val: u8, add: u8, carry: bool) -> bool {
+        (val & 0xF) + (add & 0xF) + carry as u8 > 0xF
+    }
+    fn carry_adc_8(val: u8, add: u8, carry: bool) -> bool {
+        (val as u16) + (add as u16) + carry as u16 > 0xFF
+    }
+    fn carry_add_16(val: u16, add: u16) -> bool {
+        (val as u32) + (add as u32) > 0xFFFF
+    }
+    fn half_carry_add_16(val: u16, add: u16) -> bool {
+        (val & 0xFFF) + (add & 0xFFF) > 0xFFF
+    }
+    fn half_carry_add_sp(val: u16, add: i8) -> bool {
+        ((val & 0xF) + ((add as u16) & 0xF)) > 0xF
+    }
+    fn carry_add_sp(val: u16, add: i8) -> bool {
+        let add_u16 = add as u16;
+        let adj = if add_u16 > 0x7F {
+            add_u16 | 0xFF00
+        } else {
+            add_u16
+        };
+        (val & 0xFF) + adj > 0xFF
+    }
+    fn half_carry_sub_8(val: u8, sub: u8) -> bool {
+        (val & 0xF) < (sub & 0xF)
+    }
+    fn carry_sub_8(val: u8, sub: u8) -> bool {
+        val < sub
+    }
+    fn half_carry_sbc_8(val: u8, sub: u8, carry: bool) -> bool {
+        (val & 0xF) < (sub & 0xF) + (carry as u8)
+    }
+    fn carry_sbc_8(val: u8, sub: u8, carry: bool) -> bool {
+        val < sub + (carry as u8)
+    }
+    fn half_carry_sub_16(val: u16, sub: u16) -> bool {
+        (val & 0xFFF) < (sub & 0xFFF)
+    }
+    fn carry_sub_16(val: u16, sub: u16) -> bool {
+        val < sub
+    }
+    // fn sub_carry_flag_u8(mut left: u8, right: Vec<u8>, bit: u8) -> bool {
+    //     let mask = 0xFF >> (8 - bit);
+    //     for i in right.iter() {
+    //         if i & mask > left & mask {
+    //             return true;
+    //         }
+    //         left -= i;
+    //     }
+    //
+    //     false
+    // }
+    fn i8_from_u8(byte: u8) -> i8 {
+        if byte & 0x80 == 0x80 {
+            let mut ret = byte;
+            ret -= 1;
+            ret = !ret;
+            (ret as i8) * -1
         }
-
-        false
+        // pos
+        else {
+            byte as i8
+        }
     }
     fn get_r8(&self, operand: u8) -> u8 {
         use super::registers::RegResult;
@@ -249,6 +323,17 @@ impl Cpu {
 
         r8_val.expect("Invalid r8 register was passed in")
     }
+    fn resolve_condition(&self, cond: u8) -> Result<bool, String> {
+        let flags = self.reg.f();
+        // 0b_ZNHC_0000
+        match cond {
+            0b_00 => Ok(flags & flags::Z == 0), // NZ
+            0b_01 => Ok(flags & flags::Z != 0), // Z
+            0b_10 => Ok(flags & flags::C == 0), // NC
+            0b_11 => Ok(flags & flags::C != 0), // C
+            _ => Err(format!("Invalid conditional: {:#04b}", cond)),
+        }
+    }
 }
 
 // block 0 of instructions
@@ -256,7 +341,7 @@ impl Cpu {
     fn nop(&self) {}
 
     fn ld_r16_imm16(&mut self, dest: u8) {
-        let val = self.imm16();
+        let val = self.imm16_unsigned();
         self.reg.set_r16(val, dest);
     }
 
@@ -270,6 +355,7 @@ impl Cpu {
             .reg
             .get_r16mem(source)
             .expect("Invalid r16mem register") as usize;
+        println!("location: {}", location);
         self.reg.set_a(self.mem[location]);
     }
 
@@ -277,40 +363,35 @@ impl Cpu {
     fn ld_imm16_sp(&mut self) {
         let sp = self.reg.sp();
 
-        self.inc_pc();
-        let pc = self.pc() as usize;
-        self.mem[pc] = (sp & 0xFF) as u8;
+        let location = self.imm16_unsigned() as usize;
 
-        self.inc_pc();
-        let pc = self.pc() as usize;
-        self.mem[pc] = (sp >> 8) as u8;
-
-        self.inc_pc();
+        self.mem[location] = (sp & 0xFF) as u8;
+        self.mem[location + 1] = (sp >> 8) as u8;
     }
 
     fn inc_r16(&mut self, operand: u8) {
         let r16_val = self.reg.get_r16(operand).expect("Invalid r16 register");
-        self.reg.set_r16(r16_val + 1, operand);
+        self.reg.set_r16(r16_val.wrapping_add(1), operand);
     }
 
     fn dec_r16(&mut self, operand: u8) {
         let r16_val = self.reg.get_r16(operand).expect("Invalid r16 register");
-        self.reg.set_r16(r16_val - 1, operand);
+        self.reg.set_r16(r16_val.wrapping_sub(1), operand);
     }
 
     fn add_hl_r16(&mut self, operand: u8) {
         let hl_val = self.reg.hl();
         let r16_val = self.reg.get_r16(operand).expect("Invalid r16 register");
-        let res = hl_val + r16_val;
+        let res = hl_val.wrapping_add(r16_val);
         self.reg.set_hl(res);
 
         let mut flags = 0x00;
         flags |= Self::preserve_flag(self.reg.f(), flags::Z);
         // N should be 0
-        if Self::add_carry_flag_u16(vec![hl_val, r16_val], 11) {
+        if Self::half_carry_add_16(hl_val, r16_val) {
             flags |= flags::H;
         }
-        if Self::add_carry_flag_u16(vec![hl_val, r16_val], 15) {
+        if Self::carry_add_16(hl_val, r16_val) {
             flags |= flags::C;
         }
 
@@ -320,7 +401,7 @@ impl Cpu {
     fn inc_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
 
-        let res = val + 1;
+        let res = val.wrapping_add(1);
         self.reg.set_r8(res, operand);
 
         let mut flags = 0x00;
@@ -328,7 +409,7 @@ impl Cpu {
             flags |= flags::Z;
         }
         // N should be 0
-        if Self::add_carry_flag_u8(vec![val, 1], 3) {
+        if Self::half_carry_add_8(val, 1) {
             flags |= flags::H;
         }
         flags |= Self::preserve_flag(self.reg.f(), flags::C);
@@ -336,8 +417,6 @@ impl Cpu {
     }
     fn dec_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
-
-        // let res = val - 1;
         let res = val.wrapping_sub(1);
         self.reg.set_r8(res, operand);
 
@@ -346,7 +425,7 @@ impl Cpu {
             flags |= flags::Z;
         }
         flags |= flags::N;
-        if Self::sub_carry_flag_u8(val, vec![1], 4) {
+        if Self::half_carry_sub_8(val, 1) {
             flags |= flags::H;
         }
         flags |= Self::preserve_flag(self.reg.f(), flags::C);
@@ -354,7 +433,8 @@ impl Cpu {
     }
     fn ld_r8_imm8(&mut self, dest: u8) {
         self.inc_pc();
-        self.reg.set_r8(self.fetch_byte(), dest);
+        let byte = self.imm8_unsigned();
+        self.reg.set_r8(byte, dest);
     }
     fn rlca(&mut self) {
         let val = self.reg.a().rotate_left(1);
@@ -474,12 +554,13 @@ impl Cpu {
         self.reg.set_f(flags);
     }
     fn jr_imm8(&mut self) {
-        let relative_value = self.imm8();
+        let relative_value = self.imm8_unsigned();
         self.reg.set_pc(self.pc() + relative_value as u16);
     }
-    fn jr_cond_imm8(&mut self, _condition: u8) {
-        let relative_value = self.imm8();
-        if self.reg.f() & flags::Z == flags::Z {
+    fn jr_cond_imm8(&mut self, cond: u8) {
+        let relative_value = self.imm8_unsigned();
+        debug!("Read byte {:04X}, or {}", relative_value, relative_value);
+        if self.resolve_condition(cond).unwrap() {
             self.reg.set_pc(self.pc() + relative_value as u16);
         }
     }
@@ -512,10 +593,10 @@ impl Cpu {
             flags |= flags::Z;
         }
         // N is 0
-        if Self::add_carry_flag_u8(vec![self.reg.a(), val], 3) {
+        if Self::half_carry_add_8(self.reg.a(), val) {
             flags |= flags::H;
         }
-        if Self::add_carry_flag_u8(vec![self.reg.a(), val], 7) {
+        if Self::carry_add_8(self.reg.a(), val) {
             flags |= flags::C;
         }
         self.reg.set_f(flags);
@@ -523,12 +604,9 @@ impl Cpu {
     fn adc_a_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
         let a_val = self.reg.a();
-        let result = a_val + val;
-        let carry = match self.reg.f() & flags::C == flags::C {
-            true => 1,
-            false => 0,
-        };
+        let carry = self.reg.f() & flags::C == flags::C;
 
+        let result = a_val + val + carry as u8;
         self.reg.set_a(result);
 
         let mut flags = 0x00;
@@ -536,10 +614,10 @@ impl Cpu {
             flags |= flags::Z;
         }
         // N is 0
-        if Self::add_carry_flag_u8(vec![a_val, val, carry], 3) {
+        if Self::half_carry_adc_8(a_val, val, carry) {
             flags |= flags::H;
         }
-        if Self::add_carry_flag_u8(vec![a_val, val, carry], 7) {
+        if Self::carry_adc_8(a_val, val, carry) {
             flags |= flags::C;
         }
         self.reg.set_f(flags);
@@ -556,10 +634,10 @@ impl Cpu {
             flags |= flags::Z;
         }
         flags |= flags::N;
-        if Self::sub_carry_flag_u8(a_val, vec![val], 4) {
+        if Self::half_carry_sub_8(a_val, val) {
             flags |= flags::H;
         }
-        if val > a_val {
+        if Self::carry_sub_8(a_val, val) {
             flags |= flags::C;
         }
         self.reg.set_f(flags);
@@ -567,12 +645,10 @@ impl Cpu {
     fn sbc_a_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
         let a_val = self.reg.a();
-        let carry = match self.reg.f() & flags::C == flags::C {
-            true => 1,
-            false => 0,
-        };
+        let carry = self.reg.f() & flags::C == flags::C;
 
-        let result = a_val - val - carry;
+        let result = a_val - val - carry as u8;
+
         self.reg.set_a(result);
 
         let mut flags = 0x00;
@@ -580,10 +656,10 @@ impl Cpu {
             flags |= flags::Z;
         }
         flags |= flags::N;
-        if Self::sub_carry_flag_u8(a_val, vec![val, carry], 4) {
+        if Self::half_carry_sbc_8(a_val, val, carry) {
             flags |= flags::H;
         }
-        if val + carry > a_val {
+        if Self::carry_sbc_8(a_val, val, carry) {
             flags |= flags::C;
         }
         self.reg.set_f(flags);
@@ -645,10 +721,10 @@ impl Cpu {
             flags |= flags::Z;
         }
         flags |= flags::N;
-        if Self::sub_carry_flag_u8(a_val, vec![val], 4) {
+        if Self::half_carry_sub_8(a_val, val) {
             flags |= flags::H;
         }
-        if val > a_val {
+        if Self::carry_sub_8(a_val, val) {
             flags |= flags::C;
         }
         self.reg.set_f(flags);
@@ -669,10 +745,10 @@ impl Cpu {
             flags |= flags::Z;
         }
         // N is 0
-        if Self::add_carry_flag_u8(vec![self.reg.a(), val], 3) {
+        if Self::half_carry_add_8(self.reg.a(), val) {
             flags |= flags::H;
         }
-        if Self::add_carry_flag_u8(vec![self.reg.a(), val], 7) {
+        if Self::carry_add_8(self.reg.a(), val) {
             flags |= flags::C;
         }
         self.reg.set_f(flags);
@@ -682,22 +758,19 @@ impl Cpu {
 
         self.inc_pc();
         let val = self.fetch_byte();
-        let carry = match self.reg.f() & flags::C == flags::C {
-            true => 1,
-            false => 0,
-        };
+        let carry = self.reg.f() & flags::C == flags::C;
 
-        let result = val + a_val;
+        let result = val + a_val + carry as u8;
 
         let mut flags = 0x00;
         if result == 0 {
             flags |= flags::Z;
         }
         // N is 0
-        if Self::add_carry_flag_u8(vec![self.reg.a(), val, carry], 3) {
+        if Self::half_carry_adc_8(self.reg.a(), val, carry) {
             flags |= flags::H;
         }
-        if Self::add_carry_flag_u8(vec![self.reg.a(), val, carry], 7) {
+        if Self::carry_adc_8(self.reg.a(), val, carry) {
             flags |= flags::C;
         }
         self.reg.set_f(flags);
@@ -715,7 +788,7 @@ impl Cpu {
             flags |= flags::Z;
         }
         flags |= flags::N;
-        if Self::sub_carry_flag_u8(a_val, vec![val], 4) {
+        if Self::half_carry_sub_8(a_val, val) {
             flags |= flags::H;
         }
         if val > a_val {
@@ -725,14 +798,11 @@ impl Cpu {
     }
     fn sbc_a_imm8(&mut self) {
         let a_val = self.reg.a();
-        let val = self.imm8();
+        let val = self.imm8_unsigned();
 
-        let carry = match self.reg.f() & flags::C == flags::C {
-            true => 1,
-            false => 0,
-        };
+        let carry = self.reg.f() & flags::C == flags::C;
 
-        let result = a_val - val - carry;
+        let result = a_val - val - carry as u8;
         self.reg.set_a(result);
 
         let mut flags = 0x00;
@@ -740,17 +810,17 @@ impl Cpu {
             flags |= flags::Z;
         }
         flags |= flags::N;
-        if Self::sub_carry_flag_u8(a_val, vec![val, carry], 4) {
+        if Self::half_carry_sbc_8(a_val, val, carry) {
             flags |= flags::H;
         }
-        if val + carry > a_val {
+        if val + carry as u8 > a_val {
             flags |= flags::C;
         }
         self.reg.set_f(flags);
     }
     fn and_a_imm8(&mut self) {
         let a_val = self.reg.a();
-        let val = self.imm8();
+        let val = self.imm8_unsigned();
 
         let result = val & a_val;
 
@@ -767,7 +837,7 @@ impl Cpu {
     }
     fn xor_a_imm8(&mut self) {
         let a_val = self.reg.a();
-        let val = self.imm8();
+        let val = self.imm8_unsigned();
 
         let result = val ^ a_val;
 
@@ -780,7 +850,7 @@ impl Cpu {
     }
     fn or_a_imm8(&mut self) {
         let a_val = self.reg.a();
-        let val = self.imm8();
+        let val = self.imm8_unsigned();
 
         let result = val | a_val;
 
@@ -794,7 +864,7 @@ impl Cpu {
     //CP A, r8 discards the result of the operation, just setting flags based on the operation
     fn cp_a_imm8(&mut self) {
         let a_val = self.reg.a();
-        let val = self.imm8();
+        let val = self.imm8_unsigned();
         let result = a_val.wrapping_sub(val);
 
         let mut flags = 0x00;
@@ -802,7 +872,7 @@ impl Cpu {
             flags |= flags::Z;
         }
         flags |= flags::N;
-        if Self::sub_carry_flag_u8(a_val, vec![val], 4) {
+        if Self::half_carry_sub_8(a_val, val) {
             flags |= flags::H;
         }
         if val > a_val {
@@ -810,13 +880,11 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn ret_cond(&mut self, _cond: u8) {
-        if self.reg.f() & flags::Z == 0 {
-            return;
+    fn ret_cond(&mut self, cond: u8) {
+        if self.resolve_condition(cond).unwrap() {
+            let new_pc = self.pop_stack();
+            self.reg.set_pc(new_pc);
         }
-
-        let new_pc = self.pop_stack();
-        self.reg.set_pc(new_pc);
     }
     fn ret(&mut self) {
         let new_pc = self.pop_stack();
@@ -826,13 +894,13 @@ impl Cpu {
         self.ei();
         self.ret();
     }
-    fn jp_cond_imm16(&mut self, _cond: u8) {
-        if self.reg.f() & flags::Z == flags::Z {
+    fn jp_cond_imm16(&mut self, cond: u8) {
+        if self.resolve_condition(cond).unwrap() {
             self.jp_imm16();
         }
     }
     fn jp_imm16(&mut self) {
-        let dest_addr = self.imm16();
+        let dest_addr = self.imm16_unsigned();
         debug!("Jumping to {:#018b} aka {:#06X}", dest_addr, dest_addr);
         self.reg.set_pc(dest_addr);
         self.dec_pc();
@@ -842,9 +910,9 @@ impl Cpu {
         self.reg.set_pc(hl);
         self.dec_pc();
     }
-    fn call_cond_imm16(&mut self, _cond: u8) {
-        let call_addr = self.imm16();
-        if self.reg.f() & flags::Z == flags::Z {
+    fn call_cond_imm16(&mut self, cond: u8) {
+        let call_addr = self.imm16_unsigned();
+        if self.resolve_condition(cond).unwrap() {
             self.dec_sp();
             let sp = self.sp() as usize;
             self.mem[sp] = (self.pc() >> 8) as u8;
@@ -852,12 +920,11 @@ impl Cpu {
             self.dec_sp();
             let sp = self.sp() as usize;
             self.mem[sp] = (self.pc() & 0xFF) as u8;
+            self.reg.set_pc(call_addr);
         }
-
-        self.reg.set_pc(call_addr);
     }
     fn call_imm16(&mut self) {
-        let call_addr = self.imm16();
+        let call_addr = self.imm16_unsigned();
 
         self.dec_sp();
         let sp = self.sp() as usize;
@@ -906,11 +973,11 @@ impl Cpu {
         self.mem[addr] = self.reg.a();
     }
     fn ldh_imm8_a(&mut self) {
-        let addr = 0xFF00 + self.imm8() as usize;
+        let addr = 0xFF00 + self.imm8_unsigned() as usize;
         self.mem[addr] = self.reg.a();
     }
     fn ld_imm16_a(&mut self) {
-        let addr = self.imm16() as usize;
+        let addr = self.imm16_unsigned() as usize;
         self.reg.set_a(self.mem[addr]);
     }
     fn ldh_a_c(&mut self) {
@@ -918,43 +985,43 @@ impl Cpu {
         self.reg.set_a(self.mem[addr]);
     }
     fn ldh_a_imm8(&mut self) {
-        let addr = 0xFF00 + self.imm8() as usize;
+        let addr = 0xFF00 + self.imm8_unsigned() as usize;
         self.reg.set_a(self.mem[addr]);
     }
     fn ld_a_imm16(&mut self) {
-        let addr = self.imm16() as usize;
+        let addr = self.imm16_unsigned() as usize;
         self.reg.set_a(self.mem[addr]);
     }
-    fn add_sp_imm8(&mut self) {
-        let val = self.imm8() as u16;
+    fn add_sp_e8(&mut self) {
+        let val = self.imm8_signed();
         let sp = self.sp();
 
-        let result = val + sp;
+        let result = (sp as i16 + val as i16) as u16;
         self.reg.set_sp(result);
 
         let mut flags = 0x00;
         // Z and N are 0
-        if Self::add_carry_flag_u16(vec![val, sp], 4) {
+        if Self::half_carry_add_sp(sp, val) {
             flags |= flags::H;
         }
-        if Self::add_carry_flag_u16(vec![val, sp], 8) {
+        if Self::carry_add_sp(sp, val) {
             flags |= flags::C;
         }
         self.reg.set_f(flags);
     }
-    fn ld_hl_sp_imm8(&mut self) {
-        let val = self.imm8() as u16;
+    fn ld_hl_sp_e8(&mut self) {
+        let val = self.imm8_signed();
         let sp = self.sp();
 
-        let result = val + sp;
+        let result = (sp as i16 + val as i16) as u16;
         self.reg.set_hl(result);
 
         let mut flags = 0x00;
         // Z and N are 0
-        if Self::add_carry_flag_u16(vec![val, sp], 4) {
+        if Self::half_carry_add_sp(sp, val) {
             flags |= flags::H;
         }
-        if Self::add_carry_flag_u16(vec![val, sp], 8) {
+        if Self::carry_add_sp(sp, val) {
             flags |= flags::C;
         }
         self.reg.set_f(flags);
@@ -1119,29 +1186,31 @@ mod test {
             assert_eq!(cpu.mem[0x101], 0b11000011);
         }
 
-        #[test]
-        fn add_carry_flag_u8_carry() {
-            // fn add_carry_flag_u8(vals: Vec<u8>, bit: u8) -> bool {
-            let res = Cpu::add_carry_flag_u8(vec![0b_1111, 0b_0001], 3);
-            assert!(res);
-            let res = Cpu::add_carry_flag_u8(vec![0b_1101, 0b_0011], 3);
-            assert!(res);
-            let res = Cpu::add_carry_flag_u8(vec![0b_1111_1111, 0b_1111_0001], 3);
-            assert!(res);
-            let res = Cpu::add_carry_flag_u8(vec![0b_1100, 0b_0011, 0b_0001], 3);
-            assert!(res);
-        }
+        // Deprecated
+        // #[test]
+        // fn add_carry_flag_u8_carry() {
+        //     // fn add_carry_flag_u8(vals: Vec<u8>, bit: u8) -> bool {
+        //     let res = Cpu::add_carry_flag_u8(vec![0b_1111, 0b_0001], 3);
+        //     assert!(res);
+        //     let res = Cpu::add_carry_flag_u8(vec![0b_1101, 0b_0011], 3);
+        //     assert!(res);
+        //     let res = Cpu::add_carry_flag_u8(vec![0b_1111_1111, 0b_1111_0001], 3);
+        //     assert!(res);
+        //     let res = Cpu::add_carry_flag_u8(vec![0b_1100, 0b_0011, 0b_0001], 3);
+        //     assert!(res);
+        // }
 
-        #[test]
-        fn add_carry_flag_u8_no_carry() {
-            // fn add_carry_flag_u8(vals: Vec<u8>, bit: u8) -> bool {
-            let res = Cpu::add_carry_flag_u8(vec![0b_1111, 0b_0000], 3);
-            assert!(!res);
-            let res = Cpu::add_carry_flag_u8(vec![0b_1100, 0b_0010], 3);
-            assert!(!res);
-            let res = Cpu::add_carry_flag_u8(vec![0b_1111_0101, 0b_1111_1010], 3);
-            assert!(!res);
-        }
+        // Deprecated
+        // #[test]
+        // fn add_carry_flag_u8_no_carry() {
+        //     // fn add_carry_flag_u8(vals: Vec<u8>, bit: u8) -> bool {
+        //     let res = Cpu::add_carry_flag_u8(vec![0b_1111, 0b_0000], 3);
+        //     assert!(!res);
+        //     let res = Cpu::add_carry_flag_u8(vec![0b_1100, 0b_0010], 3);
+        //     assert!(!res);
+        //     let res = Cpu::add_carry_flag_u8(vec![0b_1111_0101, 0b_1111_1010], 3);
+        //     assert!(!res);
+        // }
     }
 
     mod block_0 {
@@ -1177,6 +1246,7 @@ mod test {
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg, result_reg);
         }
+
         #[test]
         fn test_ld_r16_imm16() {
             let mut cpu = setup(
@@ -1219,22 +1289,146 @@ mod test {
             result_reg.set_sp(0b_1000_0001_1110_0111);
             assert_eq!(cpu.reg, result_reg);
         }
-        // #[test]
-        // fn test_ld_r16mem_a() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_ld_a_r16mem() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_ld_imm16_sp() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_inc_r16() {
-        //     assert!(false)
-        // }
+
+        #[test]
+        fn test_ld_r16mem_a() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::LdR16MemA { dest: 0 }, // BC
+                    Instruction::LdR16MemA { dest: 1 }, // DE
+                    Instruction::LdR16MemA { dest: 2 }, // HL+
+                    Instruction::LdR16MemA { dest: 3 }, // HL-
+                    Instruction::LdR16MemA { dest: 3 }, // HL-
+                    Instruction::LdR16MemA { dest: 3 }, // HL-
+                    Instruction::LdR16MemA { dest: 2 }, // HL+
+                ],
+                Some(0xC0),
+            );
+            cpu.reg.set_bc(0x8000);
+            cpu.reg.set_de(0x8100);
+            cpu.reg.set_hl(0x8200);
+            cpu.reg.set_a(0x12);
+
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0x12);
+            assert_eq!(cpu.reg.f(), 0xC0);
+            assert_eq!(cpu.mem[cpu.reg.bc() as usize], 0x12);
+
+            cpu.reg.set_a(0xFF);
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0xFF);
+            assert_eq!(cpu.mem[cpu.reg.de() as usize], 0xFF);
+
+            cpu.reg.set_a(0x0F);
+            let old_hl = cpu.reg.hl();
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0x0F);
+            assert_eq!(cpu.reg.hl(), 0x8201);
+            assert_eq!(cpu.mem[old_hl as usize], 0x0F);
+
+            cpu.reg.set_a(0xF0);
+            let old_hl = cpu.reg.hl();
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0xF0);
+            assert_eq!(cpu.reg.hl(), 0x8200);
+            assert_eq!(cpu.mem[old_hl as usize], 0xF0);
+
+            cpu.reg.set_a(0x01);
+            let old_hl = cpu.reg.hl();
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0x01);
+            assert_eq!(cpu.reg.hl(), 0x81FF);
+            assert_eq!(cpu.mem[old_hl as usize], 0x01);
+
+            cpu.reg.set_a(0x02);
+            cpu.reg.set_hl(0x0000);
+            let old_hl = cpu.reg.hl();
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0x02);
+            assert_eq!(cpu.reg.hl(), 0xFFFF);
+            assert_eq!(cpu.mem[old_hl as usize], 0x02);
+
+            cpu.reg.set_a(0x0C);
+            cpu.reg.set_hl(0xFFFF);
+            let old_hl = cpu.reg.hl();
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0x0C);
+            assert_eq!(cpu.reg.hl(), 0x0000);
+            assert_eq!(cpu.mem[old_hl as usize], 0x0C);
+        }
+        #[test]
+        fn test_ld_a_r16mem() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::LdAR16Mem { source: 0 },
+                    Instruction::LdAR16Mem { source: 1 },
+                    Instruction::LdAR16Mem { source: 2 },
+                    Instruction::LdAR16Mem { source: 3 },
+                ],
+                Some(0xC0),
+            );
+
+            cpu.reg.set_bc(0x3B87);
+            cpu.mem[0x3B87] = 0b_1011_0100;
+            cpu.step();
+            assert_eq!(cpu.reg.a(), 0b_1011_0100);
+
+            cpu.reg.set_de(0xFF12);
+            cpu.mem[0xFF12] = 0b_0100_0101;
+            cpu.step();
+            assert_eq!(cpu.reg.a(), 0b_0100_0101);
+
+            cpu.reg.set_hl(0x1234);
+            cpu.mem[0x1234] = 0b_0000_1111;
+            cpu.step();
+            assert_eq!(cpu.reg.a(), 0b_0000_1111);
+            assert_eq!(cpu.reg.hl(), 0x1235);
+
+            cpu.reg.set_hl(0xFF12);
+            cpu.mem[0xFF12] = 0b_0101_1101;
+            cpu.step();
+            assert_eq!(cpu.reg.a(), 0b_0101_1101);
+            assert_eq!(cpu.reg.hl(), 0xFF11);
+        }
+        #[test]
+        fn test_ld_imm16_sp() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::LdImm16SP,
+                    Instruction::Data { byte: 0xF1 },
+                    Instruction::Data { byte: 0x32 },
+                ],
+                Some(0xC0),
+            );
+            cpu.reg.set_sp(0x87BA);
+
+            let mut old_regs = cpu.reg;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            old_regs.set_pc(0x103);
+            assert_eq!(cpu.mem[0x32F1 as usize], 0xBA);
+            assert_eq!(cpu.mem[0x32F2 as usize], 0x87);
+            assert_eq!(old_regs, cpu.reg);
+        }
+        #[test]
+        fn test_inc_r16() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::IncR16 { operand: 0 },
+                    Instruction::IncR16 { operand: 1 },
+                    Instruction::IncR16 { operand: 2 },
+                    Instruction::IncR16 { operand: 3 },
+                ],
+                Some(0x30),
+            );
+        }
         // #[test]
         // fn test_dec_r16() {
         //     assert!(false)
