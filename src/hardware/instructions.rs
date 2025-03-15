@@ -1,4 +1,3 @@
-use log::debug;
 fn check_mask(val: u8, mask: u8, params_mask: u8) -> bool {
     let mut bits = val ^ mask;
     bits = bits & !params_mask;
@@ -27,7 +26,7 @@ pub enum Instruction {
     SCF,
     CCF,
     JRImm8,
-    JRCondImm8 { condition: u8 },
+    JRCondImm8 { cond: u8 },
     Stop,
 
     // block 1
@@ -145,7 +144,7 @@ impl TryFrom<u8> for Instruction {
             Ok(JRImm8)
         } else if check_mask(byte, 0b_0010_0000, 0b_0001_1000) {
             Ok(JRCondImm8 {
-                condition: (byte >> 3) & 0b_0000_0011,
+                cond: (byte >> 3) & 0b_0000_0011,
             })
         } else if check_mask(byte, 0b_0001_0000, 0) {
             Ok(Stop)
@@ -269,7 +268,7 @@ impl TryFrom<u8> for Instruction {
         } else if check_mask(byte, 0b_1111_1011, 0) {
             Ok(EI)
         } else {
-            Err(format!("Unrecognized instruction {:#04x}", byte))
+            Err(format!("Unrecognized instruction {:#04X}", byte))
         }
     }
 }
@@ -282,7 +281,7 @@ impl From<Instruction> for u8 {
             Nop => 0x00,
             LdR16Imm16 { dest } => 0x01 | (dest << 4),
             LdR16MemA { dest } => 0x02 | (dest << 4),
-            LdAR16Mem { source } => 0x06 | (source << 4),
+            LdAR16Mem { source } => 0x0A | (source << 4),
             LdImm16SP => 0x08,
             IncR16 { operand } => 0x03 | (operand << 4),
             DecR16 { operand } => 0x0B | (operand << 4),
@@ -299,7 +298,7 @@ impl From<Instruction> for u8 {
             SCF => 0x37,
             CCF => 0x3F,
             JRImm8 => 0x18,
-            JRCondImm8 { condition } => 0x20 | (condition << 3),
+            JRCondImm8 { cond: condition } => 0x20 | (condition << 3),
             Stop => 0x10,
 
             // block 1
@@ -591,10 +590,10 @@ mod test {
 
             #[test]
             fn jr_cond_imm8() {
-                for condition in 0..4 {
+                for cond in 0..4 {
                     assert_eq!(
-                        JRCondImm8 { condition },
-                        (0x20 | (condition << 3)).try_into().unwrap()
+                        JRCondImm8 { cond },
+                        (0x20 | (cond << 3)).try_into().unwrap()
                     );
                 }
             }
