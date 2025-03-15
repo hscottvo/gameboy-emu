@@ -17,7 +17,9 @@
             SDL
             sdl3
             wasm-pack
+            zsh
           ];
+          shellHook = "exec zsh --login";
         };
       };
   };

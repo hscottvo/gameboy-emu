@@ -5,6 +5,7 @@ pkgs.mkShell {
     cargo-watch
     lld
     rustc
+    SDL
     sdl3
     wasm-pack
   ];
