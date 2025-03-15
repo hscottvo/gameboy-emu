@@ -1,6 +1,6 @@
 use super::cartridge::Cartridge;
 use std::cmp::min;
-use std::ops::{Index, IndexMut};
+use std::ops::{Index, IndexMut, Range};
 
 pub struct Memory {
     data: Vec<u8>,
@@ -8,9 +8,10 @@ pub struct Memory {
 
 impl Memory {
     pub fn new() -> Self {
-        let ret = Memory {
+        let mut ret = Memory {
             data: vec![0; 0x10000],
         };
+        ret.data[0xFF00] = 0x30;
         ret
     }
     pub fn new_with_cart(cart: Cartridge) -> Self {
@@ -21,6 +22,7 @@ impl Memory {
         for i in 0..min(data.len(), 0x8000) {
             ret.data[i] = data[i];
         }
+        ret.data[0xFF00] = 0x30;
         ret
     }
 }
@@ -34,6 +36,12 @@ impl Index<usize> for Memory {
 impl IndexMut<usize> for Memory {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.data[index]
+    }
+}
+impl Index<Range<usize>> for Memory {
+    type Output = [u8];
+    fn index(&self, range: Range<usize>) -> &Self::Output {
+        &self.data[range]
     }
 }
 
