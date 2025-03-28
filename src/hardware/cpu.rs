@@ -74,9 +74,6 @@ impl Cpu {
     fn imm8_signed(&mut self) -> i8 {
         self.inc_pc();
         let byte = self.fetch_byte();
-        // neg
-        // -6 is 1010
-        // to get 6: -1 -> 1001, then not -> 0110
         Self::i8_from_u8(byte)
     }
     fn pop_stack(&mut self) -> u16 {
@@ -201,13 +198,7 @@ impl Cpu {
     pub fn step(&mut self) {
         let byte = self.fetch_byte();
         let opcode = self.resolve_opcode(byte);
-        debug!(
-            "{:#06X}: {:#010b} aka {:#04X} -> {:?}",
-            self.pc(),
-            byte,
-            byte,
-            opcode
-        );
+        debug!("{:#06X} -> {:?}", self.pc(), opcode);
         self.execute_opcode(opcode);
         self.inc_pc();
     }
@@ -282,12 +273,12 @@ impl Cpu {
     fn carry_sbc_8(val: u8, sub: u8, carry: bool) -> bool {
         val < sub + (carry as u8)
     }
-    fn half_carry_sub_16(val: u16, sub: u16) -> bool {
-        (val & 0xFFF) < (sub & 0xFFF)
-    }
-    fn carry_sub_16(val: u16, sub: u16) -> bool {
-        val < sub
-    }
+    // fn half_carry_sub_16(val: u16, sub: u16) -> bool {
+    //     (val & 0xFFF) < (sub & 0xFFF)
+    // }
+    // fn carry_sub_16(val: u16, sub: u16) -> bool {
+    //     val < sub
+    // }
     // fn sub_carry_flag_u8(mut left: u8, right: Vec<u8>, bit: u8) -> bool {
     //     let mask = 0xFF >> (8 - bit);
     //     for i in right.iter() {
@@ -355,7 +346,6 @@ impl Cpu {
             .reg
             .get_r16mem(source)
             .expect("Invalid r16mem register") as usize;
-        println!("location: {}", location);
         self.reg.set_a(self.mem[location]);
     }
 
@@ -402,7 +392,15 @@ impl Cpu {
         let val = self.get_r8(operand);
 
         let res = val.wrapping_add(1);
-        self.reg.set_r8(res, operand);
+        let write_result = self.reg.set_r8(res, operand);
+        use super::registers::RegResult;
+        match write_result {
+            RegResult::Defer => self.mem[self.reg.hl() as usize] = res,
+            RegResult::Success => {}
+            _ => {
+                panic!("Invalid RegResult!")
+            }
+        }
 
         let mut flags = 0x00;
         if res == 0 {
@@ -418,7 +416,15 @@ impl Cpu {
     fn dec_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
         let res = val.wrapping_sub(1);
-        self.reg.set_r8(res, operand);
+        let write_result = self.reg.set_r8(res, operand);
+        use super::registers::RegResult;
+        match write_result {
+            RegResult::Defer => self.mem[self.reg.hl() as usize] = res,
+            RegResult::Success => {}
+            _ => {
+                panic!("Invalid RegResult!")
+            }
+        }
 
         let mut flags = 0x00;
         if res == 0 {
@@ -432,9 +438,14 @@ impl Cpu {
         self.reg.set_f(flags);
     }
     fn ld_r8_imm8(&mut self, dest: u8) {
-        self.inc_pc();
         let byte = self.imm8_unsigned();
-        self.reg.set_r8(byte, dest);
+        let write_result = self.reg.set_r8(byte, dest);
+        use super::registers::RegResult;
+        match write_result {
+            RegResult::Success => {}
+            RegResult::Defer => self.mem[self.reg.hl() as usize] = byte,
+            _ => panic!("Unexpected RegResult"),
+        }
     }
     fn rlca(&mut self) {
         let val = self.reg.a().rotate_left(1);
@@ -468,7 +479,7 @@ impl Cpu {
         }
         self.reg.set_a(new_a);
 
-        let mut flags = 0x80;
+        let mut flags = 0x00;
         // Z, N, and H are 0
         if set_c {
             flags |= flags::C;
@@ -486,7 +497,7 @@ impl Cpu {
         }
         self.reg.set_a(new_a);
 
-        let mut flags = 0x80;
+        let mut flags = 0x00;
         // Z, N, and H are 0
         if set_c {
             flags |= flags::C;
@@ -522,7 +533,7 @@ impl Cpu {
         if result == 0 {
             flags |= flags::Z;
         }
-        flags |= Self::preserve_flag(flags, flags::N);
+        flags |= Self::preserve_flag(self.reg.f(), flags::N);
         // H is 0
         // C is set above
         self.reg.set_f(flags);
@@ -531,22 +542,22 @@ impl Cpu {
         self.reg.set_a(!self.reg.a());
 
         let mut flags = 0x00;
-        flags |= Self::preserve_flag(flags, flags::Z);
+        flags |= Self::preserve_flag(self.reg.f(), flags::Z);
         flags |= flags::N;
         flags |= flags::H;
-        flags |= Self::preserve_flag(flags, flags::C);
+        flags |= Self::preserve_flag(self.reg.f(), flags::C);
         self.reg.set_f(flags);
     }
     fn scf(&mut self) {
         let mut flags = 0x00;
-        flags |= Self::preserve_flag(flags, flags::Z);
+        flags |= Self::preserve_flag(self.reg.f(), flags::Z);
         // N, H is 0
         flags |= flags::C;
         self.reg.set_f(flags);
     }
     fn ccf(&mut self) {
         let mut flags = 0x00;
-        flags |= Self::preserve_flag(flags, flags::Z);
+        flags |= Self::preserve_flag(self.reg.f(), flags::Z);
         // N, H is 0
         if self.reg.f() & flags::C == 0x00 {
             flags |= flags::C;
@@ -554,14 +565,27 @@ impl Cpu {
         self.reg.set_f(flags);
     }
     fn jr_imm8(&mut self) {
-        let relative_value = self.imm8_unsigned();
-        self.reg.set_pc(self.pc() + relative_value as u16);
+        let relative_value: i8 = self.imm8_signed();
+        match 0.cmp(&relative_value) {
+            std::cmp::Ordering::Greater => self
+                .reg
+                .set_pc(self.pc().wrapping_sub((relative_value * -1) as u16)),
+            _ => self
+                .reg
+                .set_pc(self.pc().wrapping_add(relative_value as u16)),
+        }
     }
     fn jr_cond_imm8(&mut self, cond: u8) {
-        let relative_value = self.imm8_unsigned();
-        debug!("Read byte {:04X}, or {}", relative_value, relative_value);
+        let relative_value = self.imm8_signed();
         if self.resolve_condition(cond).unwrap() {
-            self.reg.set_pc(self.pc() + relative_value as u16);
+            match 0.cmp(&relative_value) {
+                std::cmp::Ordering::Greater => self
+                    .reg
+                    .set_pc(self.pc().wrapping_sub((relative_value * -1) as u16)),
+                _ => self
+                    .reg
+                    .set_pc(self.pc().wrapping_add(relative_value as u16)),
+            }
         }
     }
     fn stop(&mut self) {
@@ -578,15 +602,21 @@ impl Cpu {
     fn ld_r8_r8(&mut self, dest: u8, source: u8) {
         let val = self.get_r8(source);
 
-        self.reg.set_r8(val, dest);
+        let write_result = self.reg.set_r8(val, dest);
+        use super::registers::RegResult;
+        match write_result {
+            RegResult::Defer => self.mem[self.reg.hl() as usize] = val,
+            RegResult::Success => {}
+            RegResult::Failure => panic!("Invalid reg result"),
+            _ => panic!("Unexpected reg result"),
+        }
     }
 }
 impl Cpu {
     // block 2
     fn add_a_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
-        let result = self.reg.a() + val;
-        self.reg.set_a(result);
+        let result = self.reg.a().wrapping_add(val);
 
         let mut flags = 0x00;
         if result == 0 {
@@ -599,6 +629,7 @@ impl Cpu {
         if Self::carry_add_8(self.reg.a(), val) {
             flags |= flags::C;
         }
+        self.reg.set_a(result);
         self.reg.set_f(flags);
     }
     fn adc_a_r8(&mut self, operand: u8) {
@@ -606,7 +637,7 @@ impl Cpu {
         let a_val = self.reg.a();
         let carry = self.reg.f() & flags::C == flags::C;
 
-        let result = a_val + val + carry as u8;
+        let result = a_val.wrapping_add(val).wrapping_add(carry as u8);
         self.reg.set_a(result);
 
         let mut flags = 0x00;
@@ -625,7 +656,7 @@ impl Cpu {
     fn sub_a_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
         let a_val = self.reg.a();
-        let result = a_val - val;
+        let result = a_val.wrapping_sub(val);
 
         self.reg.set_a(result);
 
@@ -647,7 +678,8 @@ impl Cpu {
         let a_val = self.reg.a();
         let carry = self.reg.f() & flags::C == flags::C;
 
-        let result = a_val - val - carry as u8;
+        // let result = a_val - val - carry as u8;
+        let result = a_val.wrapping_sub(val).wrapping_sub(carry as u8);
 
         self.reg.set_a(result);
 
@@ -714,7 +746,7 @@ impl Cpu {
     fn cp_a_r8(&mut self, operand: u8) {
         let val = self.get_r8(operand);
         let a_val = self.reg.a();
-        let result = a_val - val;
+        let result = a_val.wrapping_sub(val);
 
         let mut flags = 0x00;
         if result == 0 {
@@ -895,8 +927,11 @@ impl Cpu {
         self.ret();
     }
     fn jp_cond_imm16(&mut self, cond: u8) {
+        let dest_addr = self.imm16_unsigned();
         if self.resolve_condition(cond).unwrap() {
-            self.jp_imm16();
+            debug!("Jumping to {:#018b} aka {:#06X}", dest_addr, dest_addr);
+            self.reg.set_pc(dest_addr);
+            self.dec_pc();
         }
     }
     fn jp_imm16(&mut self) {
@@ -1175,6 +1210,23 @@ impl Cpu {
 #[cfg(test)]
 mod test {
     use super::Cpu;
+    use super::Instruction;
+
+    const DEFAULT_FLAG: u8 = 0xC0;
+
+    fn setup(instructions: Vec<Instruction>, flags: Option<u8>) -> Cpu {
+        let mut cpu = Cpu::new();
+        if let Some(flag_bit) = flags {
+            cpu.reg.set_f(flag_bit)
+        } else {
+            cpu.reg.set_f(DEFAULT_FLAG);
+        }
+        for i in 0..instructions.len() {
+            cpu.mem[0x100 + i] = u8::from(instructions[i]);
+        }
+        // cpu.mem[0x100] = u8::from(Instruction::Nop);
+        cpu
+    }
 
     mod general {
         use super::Cpu;
@@ -1184,6 +1236,14 @@ mod test {
             let cpu = Cpu::new_with_cart("./roms/tetris.gb");
             assert_eq!(cpu.mem[0x100], 0b00000000);
             assert_eq!(cpu.mem[0x101], 0b11000011);
+        }
+
+        #[test]
+        fn test_half_carry_add_8() {
+            assert_eq!(Cpu::half_carry_add_8(0x0F, 0x01), true);
+            assert_eq!(Cpu::half_carry_add_8(0x0E, 0x01), false);
+            assert_eq!(Cpu::half_carry_add_8(0x01, 0x0E), false);
+            assert_eq!(Cpu::half_carry_add_8(0xFF, 0x01), true);
         }
 
         // Deprecated
@@ -1214,25 +1274,10 @@ mod test {
     }
 
     mod block_0 {
+        use super::super::flags;
         use super::super::Instruction;
         use super::super::Registers;
-        use super::Cpu;
-
-        const DEFAULT_FLAG: u8 = 0xC0;
-
-        fn setup(instructions: Vec<Instruction>, flags: Option<u8>) -> Cpu {
-            let mut cpu = Cpu::new();
-            if let Some(flag_bit) = flags {
-                cpu.reg.set_f(flag_bit)
-            } else {
-                cpu.reg.set_f(DEFAULT_FLAG);
-            }
-            for i in 0..instructions.len() {
-                cpu.mem[0x100 + i] = u8::from(instructions[i]);
-            }
-            // cpu.mem[0x100] = u8::from(Instruction::Nop);
-            cpu
-        }
+        use super::{setup, DEFAULT_FLAG};
 
         #[test]
         fn test_nop() {
@@ -1419,6 +1464,7 @@ mod test {
         }
         #[test]
         fn test_inc_r16() {
+            let init_flags = 0x30;
             let mut cpu = setup(
                 vec![
                     Instruction::IncR16 { operand: 0 },
@@ -1426,72 +1472,1292 @@ mod test {
                     Instruction::IncR16 { operand: 2 },
                     Instruction::IncR16 { operand: 3 },
                 ],
-                Some(0x30),
+                Some(init_flags),
             );
+            cpu.reg.set_bc(0x1234);
+            cpu.reg.set_de(0x32EF);
+            cpu.reg.set_hl(0xFFFF);
+            cpu.reg.set_sp(0x0000);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.bc(), 0x1235);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.de(), 0x32F0);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.hl(), 0x0000);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.sp(), 0x0001);
+            assert_eq!(cpu.reg.f(), init_flags);
         }
-        // #[test]
-        // fn test_dec_r16() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_add_hl_r16() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_inc_r8() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_dec_r8() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_ld_r8_imm8() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_rlca() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_rrca() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_rla() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_rra() {
-        //     assert!(false)
-        // }
+        #[test]
+        fn test_dec_r16() {
+            let init_flags = 0x30;
+            let mut cpu = setup(
+                vec![
+                    Instruction::DecR16 { operand: 0 },
+                    Instruction::DecR16 { operand: 1 },
+                    Instruction::DecR16 { operand: 2 },
+                    Instruction::DecR16 { operand: 3 },
+                ],
+                Some(init_flags),
+            );
+            cpu.reg.set_bc(0x1234);
+            cpu.reg.set_de(0x32EF);
+            cpu.reg.set_hl(0xFFFF);
+            cpu.reg.set_sp(0x0000);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.bc(), 0x1233);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.de(), 0x32EE);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.hl(), 0xFFFE);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.sp(), 0xFFFF);
+            assert_eq!(cpu.reg.f(), init_flags);
+        }
+        #[test]
+        fn test_add_hl_r16() {
+            let init_flags = 0x00;
+            let mut cpu = setup(
+                vec![
+                    Instruction::AddHLR16 { operand: 0 },
+                    Instruction::AddHLR16 { operand: 1 },
+                    Instruction::AddHLR16 { operand: 2 },
+                    Instruction::AddHLR16 { operand: 3 },
+                ],
+                Some(init_flags),
+            );
+            cpu.reg.set_hl(0x0000);
+
+            cpu.reg.set_bc(0x0FFF);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.hl(), 0x0FFF);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_de(0x0001);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.hl(), 0x1000);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.hl(), 0x2000);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_sp(0xE001);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.hl(), 0x0001);
+            assert_eq!(cpu.reg.f(), flags::C);
+        }
+        #[test]
+        fn test_inc_r8() {
+            let init_flags = flags::C;
+            let mut cpu = setup(
+                vec![
+                    Instruction::IncR8 { operand: 0 },
+                    Instruction::IncR8 { operand: 1 },
+                    Instruction::IncR8 { operand: 2 },
+                    Instruction::IncR8 { operand: 3 },
+                    Instruction::IncR8 { operand: 4 },
+                    Instruction::IncR8 { operand: 5 },
+                    Instruction::IncR8 { operand: 6 },
+                    Instruction::IncR8 { operand: 6 },
+                    Instruction::IncR8 { operand: 7 },
+                ],
+                Some(init_flags),
+            );
+
+            cpu.reg.set_b(0x00);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.b(), 0x01);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.reg.set_c(0xFF);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.c(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
+
+            cpu.reg.set_d(0x0F);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.d(), 0x10);
+            assert_eq!(cpu.reg.f(), flags::H | flags::C);
+
+            cpu.reg.set_e(0xF3);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.e(), 0xF4);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.reg.set_h(0x1F);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.h(), 0x20);
+            assert_eq!(cpu.reg.f(), flags::H | flags::C);
+
+            cpu.reg.set_l(0x32);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.l(), 0x33);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.reg.set_hl(0x3212);
+            cpu.mem[0x3212] = 0xFF;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.mem[0x3212], 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
+
+            cpu.reg.set_hl(0x3218);
+            cpu.mem[0x3218] = 0x0F;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.mem[0x3218], 0x10);
+            assert_eq!(cpu.reg.f(), flags::H | flags::C);
+        }
+        #[test]
+        fn test_dec_r8() {
+            let init_flags = flags::C;
+            let mut cpu = setup(
+                vec![
+                    Instruction::DecR8 { operand: 0 },
+                    Instruction::DecR8 { operand: 1 },
+                    Instruction::DecR8 { operand: 2 },
+                    Instruction::DecR8 { operand: 3 },
+                    Instruction::DecR8 { operand: 4 },
+                    Instruction::DecR8 { operand: 5 },
+                    Instruction::DecR8 { operand: 6 },
+                    Instruction::DecR8 { operand: 6 },
+                    Instruction::DecR8 { operand: 7 },
+                ],
+                Some(init_flags),
+            );
+
+            cpu.reg.set_b(0x00);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.b(), 0xFF);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
+
+            cpu.reg.set_c(0xFF);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.c(), 0xFE);
+            assert_eq!(cpu.reg.f(), flags::N | flags::C);
+
+            cpu.reg.set_d(0x0F);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.d(), 0x0E);
+            assert_eq!(cpu.reg.f(), flags::N | flags::C);
+
+            cpu.reg.set_e(0xF0);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.e(), 0xEF);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
+
+            cpu.reg.set_h(0x1F);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.h(), 0x1E);
+            assert_eq!(cpu.reg.f(), flags::N | flags::C);
+
+            cpu.reg.set_l(0x32);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.l(), 0x31);
+            assert_eq!(cpu.reg.f(), flags::N | flags::C);
+
+            cpu.reg.set_hl(0x3212);
+            cpu.mem[0x3212] = 0x00;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.mem[0x3212], 0xFF);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
+
+            cpu.reg.set_hl(0x3218);
+            cpu.mem[0x3218] = 0x01;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.mem[0x3218], 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N | flags::C);
+        }
+        #[test]
+        fn test_ld_r8_imm8() {
+            let init_flags = 0xC0;
+            let mut cpu = setup(
+                vec![
+                    Instruction::LdR8Imm8 { dest: 0 },
+                    Instruction::Data { byte: 0x01 },
+                    Instruction::LdR8Imm8 { dest: 1 },
+                    Instruction::Data { byte: 0xFF },
+                    Instruction::LdR8Imm8 { dest: 2 },
+                    Instruction::Data { byte: 0xF0 },
+                    Instruction::LdR8Imm8 { dest: 3 },
+                    Instruction::Data { byte: 0x0F },
+                    Instruction::LdR8Imm8 { dest: 4 },
+                    Instruction::Data { byte: 0x00 },
+                    Instruction::LdR8Imm8 { dest: 5 },
+                    Instruction::Data { byte: 0x10 },
+                    Instruction::LdR8Imm8 { dest: 6 },
+                    Instruction::Data { byte: 0x78 },
+                    Instruction::LdR8Imm8 { dest: 7 },
+                    Instruction::Data { byte: 0x87 },
+                ],
+                Some(init_flags),
+            );
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.b(), 0x01);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.c(), 0xFF);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.d(), 0xF0);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.e(), 0x0F);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10A);
+            assert_eq!(cpu.reg.h(), 0x00);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10C);
+            assert_eq!(cpu.reg.l(), 0x10);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.reg.set_hl(0x321C);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10E);
+            assert_eq!(cpu.mem[0x321C], 0x78);
+            assert_eq!(cpu.reg.f(), init_flags);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x110);
+            assert_eq!(cpu.reg.a(), 0x87);
+            assert_eq!(cpu.reg.f(), init_flags);
+        }
+        #[test]
+        fn test_rlca() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::RLCA,
+                    Instruction::RLCA,
+                    Instruction::RLCA,
+                    Instruction::RLCA,
+                    Instruction::RLCA,
+                    Instruction::RLCA,
+                    Instruction::RLCA,
+                    Instruction::RLCA,
+                ],
+                Some(0xF0),
+            );
+
+            cpu.reg.set_a(0b_0011_0110);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0b_0110_1100);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0b_1101_1000);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0b_1011_0001);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0b_0110_0011);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0b_1100_0110);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0b_1000_1101);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0b_0001_1011);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0b_0011_0110);
+            assert_eq!(cpu.reg.f(), 0x00);
+        }
+        #[test]
+        fn test_rrca() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::RRCA,
+                    Instruction::RRCA,
+                    Instruction::RRCA,
+                    Instruction::RRCA,
+                    Instruction::RRCA,
+                    Instruction::RRCA,
+                    Instruction::RRCA,
+                    Instruction::RRCA,
+                ],
+                Some(0xF0),
+            );
+
+            cpu.reg.set_a(0b_0011_0110);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0b_0001_1011);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0b_1000_1101);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0b_1100_0110);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0b_0110_0011);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0b_1011_0001);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0b_1101_1000);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0b_0110_1100);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0b_0011_0110);
+            assert_eq!(cpu.reg.f(), 0x00);
+        }
+        #[test]
+        fn test_rla() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::RLA,
+                    Instruction::RLA,
+                    Instruction::RLA,
+                    Instruction::RLA,
+                    Instruction::RLA,
+                    Instruction::RLA,
+                    Instruction::RLA,
+                    Instruction::RLA,
+                ],
+                Some(0xE0),
+            );
+            cpu.reg.set_a(0b_0011_0110);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0b_0110_1100);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0b_1101_1000);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0b_1011_0000);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0b_0110_0001);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0b_1100_0011);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0b_1000_0110);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0b_0000_1101);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0b_0001_1011);
+            assert_eq!(cpu.reg.f(), 0x00);
+        }
+        #[test]
+        fn test_rra() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::RRA,
+                    Instruction::RRA,
+                    Instruction::RRA,
+                    Instruction::RRA,
+                    Instruction::RRA,
+                    Instruction::RRA,
+                    Instruction::RRA,
+                    Instruction::RRA,
+                ],
+                Some(0xE0),
+            );
+            cpu.reg.set_a(0b_0011_0110);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0b_0001_1011);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0b_0000_1101);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0b_1000_0110);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0b_1100_0011);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0b_0110_0001);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0b_1011_0000);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0b_1101_1000);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0b_0110_1100);
+            assert_eq!(cpu.reg.f(), 0x00);
+        }
         // #[test]
         // fn test_daa() {
         //     assert!(false)
         // }
-        // #[test]
-        // fn test_cpl() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_scf() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_ccf() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_jr_imm8() {
-        //     assert!(false)
-        // }
-        // #[test]
-        // fn test_jr_cond_imm8() {
-        //     assert!(false)
-        // }
+        #[test]
+        fn test_cpl() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::CPL,
+                    Instruction::CPL,
+                    Instruction::CPL,
+                    Instruction::CPL,
+                ],
+                Some(0x00),
+            );
+
+            cpu.reg.set_a(0b_0101_1010);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0b_1010_0101);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H);
+
+            cpu.reg.set_f(0xF0);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0b_0101_1010);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N | flags::H | flags::C);
+
+            cpu.reg.set_f(0x00);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0b_1010_0101);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H);
+
+            cpu.reg.set_f(0xF0);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0b_0101_1010);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N | flags::H | flags::C);
+        }
+        #[test]
+        fn test_scf() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::SCF,
+                    Instruction::SCF,
+                    Instruction::SCF,
+                    Instruction::SCF,
+                ],
+                Some(0xF0),
+            );
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::C);
+            // assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::C);
+
+            cpu.reg.set_f(0x00);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.reg.set_f(0x80);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::C);
+        }
+        #[test]
+        fn test_ccf() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::CCF,
+                    Instruction::CCF,
+                    Instruction::CCF,
+                    Instruction::CCF,
+                ],
+                Some(0x00),
+            );
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.f(), flags::C);
+
+            cpu.reg.set_f(0xF0);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.f(), flags::Z);
+
+            cpu.reg.set_f(0x70);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_f(0xE0);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::C);
+        }
+        #[test]
+        fn test_jr_imm8() {
+            let neg_jump: i8 = -6;
+            let mut cpu = setup(
+                vec![
+                    Instruction::JRImm8,
+                    Instruction::Data { byte: 2 },
+                    Instruction::JRImm8,
+                    Instruction::Data { byte: 2 },
+                    Instruction::JRImm8,
+                    Instruction::Data { byte: 4 },
+                    Instruction::JRImm8,
+                    Instruction::Data { byte: 4 },
+                    Instruction::Data { byte: 0 },
+                    Instruction::Data { byte: 0 },
+                    Instruction::JRImm8,
+                    Instruction::Data {
+                        byte: (neg_jump as u8),
+                    },
+                    Instruction::Nop,
+                ],
+                Some(0xF0),
+            );
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10A);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+
+            cpu.step();
+            assert_eq!(cpu.resolve_opcode(cpu.fetch_byte()), Instruction::Nop);
+        }
+        #[test]
+        fn test_jr_cond_imm8() {
+            let neg_jump: i8 = -6;
+            let mut cpu = setup(
+                vec![
+                    Instruction::JRCondImm8 { cond: 0 },
+                    Instruction::Data { byte: 2 },
+                    Instruction::JRCondImm8 { cond: 0 },
+                    Instruction::Data { byte: 2 },
+                    Instruction::JRCondImm8 { cond: 0 },
+                    Instruction::Data { byte: 4 },
+                    Instruction::JRCondImm8 { cond: 0 },
+                    Instruction::Data { byte: 5 },
+                    Instruction::Data { byte: 0 },
+                    Instruction::Data { byte: 0 },
+                    Instruction::JRCondImm8 { cond: 0 },
+                    Instruction::Data {
+                        byte: (neg_jump as u8),
+                    },
+                    Instruction::Nop,
+                ],
+                Some(0x00),
+            );
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10A);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+
+            cpu.step();
+            assert_eq!(cpu.resolve_opcode(cpu.fetch_byte()), Instruction::Nop);
+        }
         // #[test]
         // fn test_stop() {
         //     assert!(false)
         // }
+    }
+    mod block_1 {
+        use super::super::flags;
+        use super::super::Instruction;
+        use super::super::Registers;
+        use super::{setup, DEFAULT_FLAG};
+
+        // #[test]
+        // fn test_halt() {}
+        #[test]
+        fn test_ld_r8_r8() {
+            let initial_flag = 0xA0;
+            let mut cpu = setup(
+                vec![
+                    Instruction::LdR8R8 { dest: 0, source: 1 },
+                    Instruction::LdR8R8 { dest: 3, source: 2 },
+                    Instruction::LdR8R8 { dest: 2, source: 6 },
+                    Instruction::LdR8R8 { dest: 6, source: 0 },
+                ],
+                Some(initial_flag),
+            );
+
+            cpu.reg.set_b(0xAA);
+            cpu.reg.set_c(0x55);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.b(), 0x55);
+            assert_eq!(cpu.reg.c(), 0x55);
+            assert_eq!(cpu.reg.f(), initial_flag);
+
+            cpu.reg.set_d(0xFF);
+            cpu.reg.set_e(0x00);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.d(), 0xFF);
+            assert_eq!(cpu.reg.e(), 0xFF);
+
+            cpu.reg.set_hl(0x3AD0);
+            cpu.mem[0x3AD0] = 0x7F;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.d(), 0x7F);
+
+            cpu.mem[0x3AD0] = 0x12;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.mem[cpu.reg.hl() as usize], 0x55);
+        }
+    }
+    mod block_2 {
+        use super::super::flags;
+        use super::super::Instruction;
+        use super::super::Registers;
+        use super::{setup, DEFAULT_FLAG};
+        #[test]
+        fn test_add_a_r8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::AddAR8 { operand: 0 },
+                    Instruction::AddAR8 { operand: 1 },
+                    Instruction::AddAR8 { operand: 2 },
+                    Instruction::AddAR8 { operand: 3 },
+                    Instruction::AddAR8 { operand: 4 },
+                    Instruction::AddAR8 { operand: 5 },
+                    Instruction::AddAR8 { operand: 6 },
+                    Instruction::AddAR8 { operand: 7 },
+                ],
+                Some(0xFF),
+            );
+            // bcdehl [hl] a
+
+            cpu.reg.set_b(0x01);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0x01);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_c(0x00);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0x01);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_d(0x0E);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0x0F);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_e(0x02);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0x11);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.reg.set_h(0xEE);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0xFF);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_l(0x01);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
+
+            cpu.mem[cpu.reg.hl() as usize] = 0x3E;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0x3E);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0x7C);
+            assert_eq!(cpu.reg.f(), flags::H);
+        }
+        #[test]
+        fn test_adc_a_r8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::AdcAR8 { operand: 0 },
+                    Instruction::AdcAR8 { operand: 1 },
+                    Instruction::AdcAR8 { operand: 2 },
+                    Instruction::AdcAR8 { operand: 3 },
+                    Instruction::AdcAR8 { operand: 4 },
+                    Instruction::AdcAR8 { operand: 5 },
+                    Instruction::AdcAR8 { operand: 6 },
+                    Instruction::AdcAR8 { operand: 7 },
+                ],
+                Some(0xFF),
+            );
+
+            cpu.reg.set_b(0x00);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0x01);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_c(0x00);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0x01);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_d(0x0E);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0x0F);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_e(0x02);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0x11);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.reg.set_h(0xEE);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0xFF);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.reg.set_l(0x01);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
+
+            cpu.mem[cpu.reg.hl() as usize] = 0x3E;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0x3F);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0x7E);
+            assert_eq!(cpu.reg.f(), flags::H);
+        }
+        #[test]
+        fn test_sub_a_r8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::SubAR8 { operand: 0 },
+                    Instruction::SubAR8 { operand: 1 },
+                    Instruction::SubAR8 { operand: 2 },
+                    Instruction::SubAR8 { operand: 3 },
+                    Instruction::SubAR8 { operand: 4 },
+                    Instruction::SubAR8 { operand: 5 },
+                    Instruction::SubAR8 { operand: 6 },
+                    Instruction::SubAR8 { operand: 7 },
+                ],
+                Some(0xFF),
+            );
+
+            cpu.reg.set_a(0x30);
+            cpu.reg.set_b(0x01);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0x2F);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H);
+
+            cpu.reg.set_c(0x05);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0x2A);
+            assert_eq!(cpu.reg.f(), flags::N);
+
+            cpu.reg.set_d(0x2A);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N);
+
+            cpu.reg.set_e(0x01);
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0xFF);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
+
+            cpu.reg.set_h(0xF1);
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0x0E);
+            assert_eq!(cpu.reg.f(), flags::N);
+
+            cpu.reg.set_l(0x1E);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0xF0);
+            assert_eq!(cpu.reg.f(), flags::N | flags::C);
+
+            cpu.mem[cpu.reg.hl() as usize] = 0x05;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0xEB);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N);
+        }
+        #[test]
+        fn test_sbc_a_r8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::SbcAR8 { operand: 0 },
+                    Instruction::SbcAR8 { operand: 1 },
+                    Instruction::SbcAR8 { operand: 2 },
+                    Instruction::SbcAR8 { operand: 3 },
+                    Instruction::SbcAR8 { operand: 4 },
+                    Instruction::SbcAR8 { operand: 5 },
+                    Instruction::SbcAR8 { operand: 6 },
+                    Instruction::SbcAR8 { operand: 7 },
+                ],
+                Some(0x00),
+            );
+
+            cpu.reg.set_a(0x30);
+            cpu.reg.set_b(0x01);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0x2F);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H);
+
+            cpu.reg.set_c(0x05);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0x2A);
+            assert_eq!(cpu.reg.f(), flags::N);
+
+            cpu.reg.set_d(0x2A);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N);
+
+            cpu.reg.set_e(0x01);
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0xFF);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
+
+            cpu.reg.set_h(0xF1);
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0x0D);
+            assert_eq!(cpu.reg.f(), flags::N);
+
+            cpu.reg.set_l(0x1D);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0xF0);
+            assert_eq!(cpu.reg.f(), flags::N | flags::C);
+
+            cpu.mem[cpu.reg.hl() as usize] = 0x05;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0xEA);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N);
+        }
+        #[test]
+        fn test_and_a_r8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::AndAR8 { operand: 0 },
+                    Instruction::AndAR8 { operand: 1 },
+                    Instruction::AndAR8 { operand: 2 },
+                    Instruction::AndAR8 { operand: 3 },
+                    Instruction::AndAR8 { operand: 4 },
+                    Instruction::AndAR8 { operand: 5 },
+                    Instruction::AndAR8 { operand: 6 },
+                    Instruction::AndAR8 { operand: 7 },
+                ],
+                Some(0xF0),
+            );
+
+            cpu.reg.set_a(0b_1111_1111);
+            cpu.reg.set_b(0b_1111_1110);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0b_1111_1110);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.reg.set_c(0b_0000_1010);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0b_0000_1010);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.reg.set_d(0b_1111_1111);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0b_0000_1010);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.reg.set_e(0b_0000_0000);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::H);
+
+            cpu.reg.set_h(0b_1111_1111);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::H);
+
+            cpu.reg.set_a(0b_1111_1111);
+            cpu.reg.set_l(0b_0011_1001);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0b_0011_1001);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.mem[cpu.reg.hl() as usize] = 0b_1110_0111;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0b_0010_0001);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0b_0010_0001);
+            assert_eq!(cpu.reg.f(), flags::H);
+        }
+        #[test]
+        fn test_xor_a_r8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::XorAR8 { operand: 0 },
+                    Instruction::XorAR8 { operand: 1 },
+                    Instruction::XorAR8 { operand: 2 },
+                    Instruction::XorAR8 { operand: 3 },
+                    Instruction::XorAR8 { operand: 4 },
+                    Instruction::XorAR8 { operand: 5 },
+                    Instruction::XorAR8 { operand: 6 },
+                    Instruction::XorAR8 { operand: 7 },
+                ],
+                Some(0xF0),
+            );
+            cpu.reg.set_a(0b_1111_1111);
+
+            cpu.reg.set_b(0b_0000_0001);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0b_1111_1110);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.reg.set_c(0b_0000_0001);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0b_1111_1111);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.reg.set_d(0b_1111_0000);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0b_0000_1111);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.reg.set_e(0b_0000_0000);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0b_0000_1111);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.reg.set_h(0b_0000_1111);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0);
+            assert_eq!(cpu.reg.f(), flags::Z);
+
+            cpu.reg.set_l(0b_1111_1111);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0b_1111_1111);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.mem[cpu.reg.hl() as usize] = 0b_0101_0101;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0b_1010_1010);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0);
+            assert_eq!(cpu.reg.f(), flags::Z);
+        }
+        #[test]
+        fn test_or_a_r8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::OrAR8 { operand: 0 },
+                    Instruction::OrAR8 { operand: 1 },
+                    Instruction::OrAR8 { operand: 2 },
+                    Instruction::OrAR8 { operand: 3 },
+                    Instruction::OrAR8 { operand: 4 },
+                    Instruction::OrAR8 { operand: 5 },
+                    Instruction::OrAR8 { operand: 6 },
+                    Instruction::OrAR8 { operand: 7 },
+                ],
+                Some(0xF0),
+            );
+            cpu.reg.set_a(0b_1111_1111);
+
+            cpu.reg.set_b(0b_0000_0001);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0b_1111_1111);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.reg.set_a(0);
+            cpu.reg.set_c(0b_0000_0001);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0b_0000_0001);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.reg.set_d(0b_1111_0000);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0b_1111_0001);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.reg.set_e(0b_0000_0000);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0b_1111_0001);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.reg.set_a(0);
+            cpu.reg.set_h(0b_0000_0000);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0);
+            assert_eq!(cpu.reg.f(), flags::Z);
+
+            cpu.reg.set_l(0b_1111_1111);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0b_1111_1111);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.mem[cpu.reg.hl() as usize] = 0b_0101_0101;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0b_1111_1111);
+            assert_eq!(cpu.reg.f(), 0);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0b_1111_1111);
+            assert_eq!(cpu.reg.f(), 0);
+        }
+        #[test]
+        fn test_cp_a_r8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::CpAR8 { operand: 0 },
+                    Instruction::CpAR8 { operand: 1 },
+                    Instruction::CpAR8 { operand: 2 },
+                    Instruction::CpAR8 { operand: 3 },
+                    Instruction::CpAR8 { operand: 4 },
+                    Instruction::CpAR8 { operand: 5 },
+                    Instruction::CpAR8 { operand: 6 },
+                    Instruction::CpAR8 { operand: 7 },
+                ],
+                Some(0x00),
+            );
+
+            cpu.reg.set_a(0x30);
+            cpu.reg.set_b(0x01);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x101);
+            assert_eq!(cpu.reg.a(), 0x30);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H);
+
+            cpu.reg.set_a(0x2F);
+            cpu.reg.set_c(0x05);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0x2F);
+            assert_eq!(cpu.reg.f(), flags::N);
+
+            cpu.reg.set_a(0x2A);
+            cpu.reg.set_d(0x2A);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x103);
+            assert_eq!(cpu.reg.a(), 0x2A);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N);
+
+            cpu.reg.set_a(0);
+            cpu.reg.set_e(0x01);
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
+
+            cpu.reg.set_a(0xFF);
+            cpu.reg.set_h(0xF1);
+            cpu.step();
+            assert_eq!(cpu.reg.pc(), 0x105);
+            assert_eq!(cpu.reg.a(), 0xFF);
+            assert_eq!(cpu.reg.f(), flags::N);
+
+            cpu.reg.set_a(0x0D);
+            cpu.reg.set_l(0x1D);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0x0D);
+            assert_eq!(cpu.reg.f(), flags::N | flags::C);
+
+            cpu.reg.set_a(0xF0);
+            cpu.mem[cpu.reg.hl() as usize] = 0x05;
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x107);
+            assert_eq!(cpu.reg.a(), 0xF0);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H);
+
+            cpu.reg.set_a(0xEA);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0xEA);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N);
+        }
     }
 }
