@@ -770,7 +770,7 @@ impl Cpu {
         self.inc_pc();
         let val = self.fetch_byte();
 
-        let result = val + a_val;
+        let result = val.wrapping_add(a_val);
 
         let mut flags = 0x00;
         if result == 0 {
@@ -783,6 +783,7 @@ impl Cpu {
         if Self::carry_add_8(self.reg.a(), val) {
             flags |= flags::C;
         }
+        self.reg.set_a(result);
         self.reg.set_f(flags);
     }
     fn adc_a_imm8(&mut self) {
@@ -792,7 +793,7 @@ impl Cpu {
         let val = self.fetch_byte();
         let carry = self.reg.f() & flags::C == flags::C;
 
-        let result = val + a_val + carry as u8;
+        let result = val.wrapping_add(a_val).wrapping_add(carry as u8);
 
         let mut flags = 0x00;
         if result == 0 {
@@ -805,6 +806,7 @@ impl Cpu {
         if Self::carry_adc_8(self.reg.a(), val, carry) {
             flags |= flags::C;
         }
+        self.reg.set_a(result);
         self.reg.set_f(flags);
     }
     fn sub_a_imm8(&mut self) {
@@ -813,7 +815,7 @@ impl Cpu {
         self.inc_pc();
         let val = self.fetch_byte();
 
-        let result = a_val - val;
+        let result = a_val.wrapping_sub(val);
 
         let mut flags = 0x00;
         if result == 0 {
@@ -826,6 +828,7 @@ impl Cpu {
         if val > a_val {
             flags |= flags::C;
         }
+        self.reg.set_a(result);
         self.reg.set_f(flags);
     }
     fn sbc_a_imm8(&mut self) {
@@ -834,7 +837,7 @@ impl Cpu {
 
         let carry = self.reg.f() & flags::C == flags::C;
 
-        let result = a_val - val - carry as u8;
+        let result = a_val.wrapping_sub(val).wrapping_sub(carry as u8);
         self.reg.set_a(result);
 
         let mut flags = 0x00;
@@ -848,6 +851,7 @@ impl Cpu {
         if val + carry as u8 > a_val {
             flags |= flags::C;
         }
+        self.reg.set_a(result);
         self.reg.set_f(flags);
     }
     fn and_a_imm8(&mut self) {
@@ -865,6 +869,7 @@ impl Cpu {
         // N is 0
         flags |= flags::H;
         // C is 0
+        self.reg.set_a(result);
         self.reg.set_f(flags);
     }
     fn xor_a_imm8(&mut self) {
@@ -891,6 +896,7 @@ impl Cpu {
             flags |= flags::Z;
         }
         // N, H, and C is 0
+        self.reg.set_a(result);
         self.reg.set_f(flags);
     }
     //CP A, r8 discards the result of the operation, just setting flags based on the operation
@@ -910,6 +916,7 @@ impl Cpu {
         if val > a_val {
             flags |= flags::C;
         }
+        self.reg.set_a(result);
         self.reg.set_f(flags);
     }
     fn ret_cond(&mut self, cond: u8) {
@@ -2186,10 +2193,8 @@ mod test {
         // }
     }
     mod block_1 {
-        use super::super::flags;
         use super::super::Instruction;
-        use super::super::Registers;
-        use super::{setup, DEFAULT_FLAG};
+        use super::setup;
 
         // #[test]
         // fn test_halt() {}
@@ -2236,8 +2241,7 @@ mod test {
     mod block_2 {
         use super::super::flags;
         use super::super::Instruction;
-        use super::super::Registers;
-        use super::{setup, DEFAULT_FLAG};
+        use super::setup;
         #[test]
         fn test_add_a_r8() {
             let mut cpu = setup(
@@ -2758,6 +2762,337 @@ mod test {
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0xEA);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N);
+        }
+    }
+    mod block_3 {
+        use super::super::flags;
+        use super::super::Instruction;
+        use super::setup;
+        #[test]
+        fn test_add_a_imm8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::AddAImm8,
+                    Instruction::Data { byte: 0xFF },
+                    Instruction::AddAImm8,
+                    Instruction::Data { byte: 0x01 },
+                    Instruction::AddAImm8,
+                    Instruction::Data { byte: 0x0D },
+                    Instruction::AddAImm8,
+                    Instruction::Data { byte: 0x03 },
+                    Instruction::AddAImm8,
+                    Instruction::Data { byte: 0x0E },
+                    Instruction::AddAImm8,
+                    Instruction::Data { byte: 0x0F },
+                    Instruction::AddAImm8,
+                    Instruction::Data { byte: 0x03 },
+                    Instruction::AddAImm8,
+                    Instruction::Data { byte: 0xFF },
+                ],
+                Some(0xFF),
+            );
+            // bcdehl [hl] a
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0xFF);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0x0D);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0x10);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10A);
+            assert_eq!(cpu.reg.a(), 0x1E);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10C);
+            assert_eq!(cpu.reg.a(), 0x2D);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10E);
+            assert_eq!(cpu.reg.a(), 0x30);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x110);
+            assert_eq!(cpu.reg.a(), 0x2F);
+            assert_eq!(cpu.reg.f(), flags::C);
+        }
+        #[test]
+        fn test_adc_a_imm8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::AdcAImm8,
+                    Instruction::Data { byte: 0xFF },
+                    Instruction::AdcAImm8,
+                    Instruction::Data { byte: 0x01 },
+                    Instruction::AdcAImm8,
+                    Instruction::Data { byte: 0x0D },
+                    Instruction::AdcAImm8,
+                    Instruction::Data { byte: 0x03 },
+                    Instruction::AdcAImm8,
+                    Instruction::Data { byte: 0x0E },
+                    Instruction::AdcAImm8,
+                    Instruction::Data { byte: 0x0F },
+                    Instruction::AdcAImm8,
+                    Instruction::Data { byte: 0x03 },
+                    Instruction::AdcAImm8,
+                    Instruction::Data { byte: 0xFF },
+                ],
+                Some(0x00),
+            );
+            // bcdehl [hl] a
+
+            println!("{}", cpu.reg.a());
+            cpu.step();
+            println!("{}", cpu.reg.a());
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0xFF);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0x0E);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0x11);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10A);
+            assert_eq!(cpu.reg.a(), 0x1F);
+            assert_eq!(cpu.reg.f(), 0x00);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10C);
+            assert_eq!(cpu.reg.a(), 0x2E);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10E);
+            assert_eq!(cpu.reg.a(), 0x31);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x110);
+            assert_eq!(cpu.reg.a(), 0x30);
+            assert_eq!(cpu.reg.f(), flags::H | flags::C);
+        }
+        #[test]
+        fn test_sub_a_imm8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::SubAImm8,
+                    Instruction::Data { byte: 0x01 },
+                    Instruction::SubAImm8,
+                    Instruction::Data { byte: 0x0A },
+                    Instruction::SubAImm8,
+                    Instruction::Data { byte: 0xF0 },
+                    Instruction::SubAImm8,
+                    Instruction::Data { byte: 0x20 },
+                    Instruction::SubAImm8,
+                    Instruction::Data { byte: 0xE5 },
+                    Instruction::SubAImm8,
+                    Instruction::Data { byte: 0x05 },
+                    Instruction::SubAImm8,
+                    Instruction::Data { byte: 0x0F },
+                    Instruction::SubAImm8,
+                    Instruction::Data { byte: 0x00 },
+                ],
+                Some(0x00),
+            );
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0xFF);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0xF5);
+            assert_eq!(cpu.reg.f(), flags::N);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0x05);
+            assert_eq!(cpu.reg.f(), flags::N);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0xE5);
+            assert_eq!(cpu.reg.f(), flags::N | flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10A);
+            assert_eq!(cpu.reg.a(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10C);
+            assert_eq!(cpu.reg.a(), 0xFB);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10E);
+            assert_eq!(cpu.reg.a(), 0xEC);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x110);
+            assert_eq!(cpu.reg.a(), 0xEC);
+            assert_eq!(cpu.reg.f(), flags::N);
+        }
+        #[test]
+        fn test_sbc_a_imm8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::SbcAImm8,
+                    Instruction::Data { byte: 0x01 },
+                    Instruction::SbcAImm8,
+                    Instruction::Data { byte: 0x0A },
+                    Instruction::SbcAImm8,
+                    Instruction::Data { byte: 0xF0 },
+                    Instruction::SbcAImm8,
+                    Instruction::Data { byte: 0x20 },
+                    Instruction::SbcAImm8,
+                    Instruction::Data { byte: 0xE3 },
+                    Instruction::SbcAImm8,
+                    Instruction::Data { byte: 0x05 },
+                    Instruction::SbcAImm8,
+                    Instruction::Data { byte: 0x0F },
+                    Instruction::SbcAImm8,
+                    Instruction::Data { byte: 0x00 },
+                ],
+                Some(0x00),
+            );
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0xFF);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0xF4);
+            assert_eq!(cpu.reg.f(), flags::N);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0x04);
+            assert_eq!(cpu.reg.f(), flags::N);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0xE4);
+            assert_eq!(cpu.reg.f(), flags::N | flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10A);
+            assert_eq!(cpu.reg.a(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::N);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10C);
+            assert_eq!(cpu.reg.a(), 0xFB);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10E);
+            assert_eq!(cpu.reg.a(), 0xEB);
+            assert_eq!(cpu.reg.f(), flags::N | flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x110);
+            assert_eq!(cpu.reg.a(), 0xEB);
+            assert_eq!(cpu.reg.f(), flags::N);
+        }
+        #[test]
+        fn test_and_a_imm8() {
+            let mut cpu = setup(
+                vec![
+                    Instruction::AndAImm8,
+                    Instruction::Data { byte: 0b_1111_1111 },
+                    Instruction::AndAImm8,
+                    Instruction::Data { byte: 0b_1010_1010 },
+                    Instruction::AndAImm8,
+                    Instruction::Data { byte: 0b_1111_1111 },
+                    Instruction::AndAImm8,
+                    Instruction::Data { byte: 0b_1111_0000 },
+                    Instruction::AndAImm8,
+                    Instruction::Data { byte: 0b_0000_1111 },
+                    Instruction::AndAImm8,
+                    Instruction::Data { byte: 0b_0101_0101 },
+                    Instruction::AndAImm8,
+                    Instruction::Data { byte: 0b_0000_1111 },
+                    Instruction::AndAImm8,
+                    Instruction::Data { byte: 0b_0000_0000 },
+                ],
+                Some(0x00),
+            );
+            cpu.reg.set_a(0xFF);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x102);
+            assert_eq!(cpu.reg.a(), 0b_1111_1111);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x104);
+            assert_eq!(cpu.reg.a(), 0b_1010_1010);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x106);
+            assert_eq!(cpu.reg.a(), 0b_1010_1010);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x108);
+            assert_eq!(cpu.reg.a(), 0b_1010_0000);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10A);
+            assert_eq!(cpu.reg.a(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::H);
+
+            cpu.reg.set_a(0xFF);
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10C);
+            assert_eq!(cpu.reg.a(), 0b_0101_0101);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x10E);
+            assert_eq!(cpu.reg.a(), 0b_0000_0101);
+            assert_eq!(cpu.reg.f(), flags::H);
+
+            cpu.step();
+            assert_eq!(cpu.pc(), 0x110);
+            assert_eq!(cpu.reg.a(), 0x00);
+            assert_eq!(cpu.reg.f(), flags::Z | flags::H);
         }
     }
 }

@@ -6,13 +6,17 @@ use sdl3::keyboard::Keycode;
 use sdl3::pixels::Color;
 use std::time::Duration;
 
+const SCALE: u32 = 2;
+const HEIGHT: u32 = 160;
+const WIDTH: u32 = 144;
+
 fn main() {
     env_logger::init();
     let sdl_context = sdl3::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
     let window = video_subsystem
-        .window("testing window", 800, 600)
+        .window("testing window", HEIGHT * SCALE, WIDTH * SCALE)
         .position_centered()
         .build()
         .unwrap();
