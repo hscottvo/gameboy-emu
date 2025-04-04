@@ -12,6 +12,7 @@
           buildInputs = with pkgs; [
             cargo
             cargo-watch
+            libwayland-dev
             lld
             rustc
             SDL
@@ -36,8 +37,23 @@
             sdl3
             wasm-pack
             zsh
+
+            pkg-config
+            # rust-bin.nightly.latest.default
+
+            xorg.libX11
+            xorg.libXcursor
+            xorg.libXrandr
+            xorg.libXi
+            xorg.libxcb
+            libxkbcommon
+            vulkan-loader
+            wayland
           ];
-          shellHook = "exec zsh --login";
+          shellHook = ''
+            exec zsh --login
+          '';
+          # export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${builtins.toString (pkgs.lib.makeLibraryPath buildInputs)}";
         };
       };
   };

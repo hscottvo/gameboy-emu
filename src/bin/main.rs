@@ -1,49 +1,29 @@
-extern crate sdl3;
-// mod hardware;
 use gameboy_hw::hardware::cpu::Cpu;
-use sdl3::event::Event;
-use sdl3::keyboard::Keycode;
-use sdl3::pixels::Color;
+use gameboy_hw::hardware::gameboy::Gameboy;
 use std::time::Duration;
+use winit::event_loop::ControlFlow;
+use winit::event_loop::EventLoop;
+
+const SCALE: u32 = 8;
+const HEIGHT: u32 = 160;
+const WIDTH: u32 = 144;
 
 fn main() {
+    let event_loop = EventLoop::new().unwrap();
+    event_loop.set_control_flow(ControlFlow::Poll);
+
+    event_loop.set_control_flow(ControlFlow::Wait);
+
+    let mut gameboy = Gameboy::new(HEIGHT, WIDTH, SCALE);
+    let _ = event_loop.run_app(&mut gameboy);
     env_logger::init();
-    let sdl_context = sdl3::init().unwrap();
-    let video_subsystem = sdl_context.video().unwrap();
-
-    let window = video_subsystem
-        .window("testing window", 800, 600)
-        .position_centered()
-        .build()
-        .unwrap();
-
-    let mut canvas = window.into_canvas();
-
-    canvas.set_draw_color(Color::RGB(0, 255, 255));
-    canvas.clear();
-    canvas.present();
-
-    let mut event_pump = sdl_context.event_pump().unwrap();
 
     let mut i = 0;
     let mut cpu = Cpu::new_with_cart("./roms/tetris.gb");
 
-    'running: loop {
+    loop {
         cpu.step();
         i = (i + 1) % 255;
-        canvas.set_draw_color(Color::RGB(i, 64, 255 - i));
-        canvas.clear();
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
-                _ => {}
-            }
-        }
-        canvas.present();
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
 }
