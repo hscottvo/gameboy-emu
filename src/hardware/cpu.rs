@@ -6,30 +6,23 @@ use log::{debug, error};
 
 pub struct Cpu {
     reg: Registers,
-    mem: Memory,
     ime: bool,
-    ime_next: bool,
 }
 
 impl Cpu {
     pub fn new() -> Self {
         let mut ret = Cpu {
             reg: Registers::default(),
-            mem: Memory::new(),
             ime: false,
-            ime_next: false,
         };
         ret.reg.set_pc(0x100);
         ret
     }
     pub fn new_with_cart(path: &str) -> Self {
-        let cart = Cartridge::new(path);
-        // let cart = Cartridge::new("./roms/tloz.gb");
+        let _cart = Cartridge::new(path);
         let mut ret = Cpu {
             reg: Registers::default(),
-            mem: Memory::new_with_cart(cart),
             ime: false,
-            ime_next: false,
         };
         ret.reg.set_pc(0x100);
         // for i in 0x100..=0x14F {
@@ -56,30 +49,30 @@ impl Cpu {
     fn dec_sp(&mut self) {
         self.reg.set_sp(self.sp() - 1);
     }
-    fn fetch_byte(&self) -> u8 {
-        self.mem[self.pc() as usize]
+    fn fetch_byte(&self, mem: &Memory) -> u8 {
+        mem[self.pc() as usize]
     }
-    fn imm8_unsigned(&mut self) -> u8 {
+    fn imm8_unsigned(&mut self, mem: &Memory) -> u8 {
         self.inc_pc();
-        self.fetch_byte()
+        self.fetch_byte(mem)
     }
-    fn imm16_unsigned(&mut self) -> u16 {
+    fn imm16_unsigned(&mut self, mem: &Memory) -> u16 {
         self.inc_pc();
-        let lsb = self.fetch_byte() as u16;
+        let lsb = self.fetch_byte(mem) as u16;
         self.inc_pc();
-        let msb = self.fetch_byte() as u16;
+        let msb = self.fetch_byte(mem) as u16;
         debug!("Got {:#06X}", msb << 8 | lsb);
         msb << 8 | lsb
     }
-    fn imm8_signed(&mut self) -> i8 {
+    fn imm8_signed(&mut self, mem: &Memory) -> i8 {
         self.inc_pc();
-        let byte = self.fetch_byte();
+        let byte = self.fetch_byte(mem);
         Self::i8_from_u8(byte)
     }
-    fn pop_stack(&mut self) -> u16 {
-        let lsb = self.mem[self.sp() as usize];
+    fn pop_stack(&mut self, mem: &Memory) -> u16 {
+        let lsb = mem[self.sp() as usize];
         self.inc_sp();
-        let msb = self.mem[self.sp() as usize];
+        let msb = mem[self.sp() as usize];
         self.inc_sp();
         (msb as u16) << 8 | (lsb as u16)
     }
@@ -103,37 +96,37 @@ impl Cpu {
             }
         }
     }
-    fn execute_cb_opcode(&mut self, instruction: InstructionCB) {
+    fn execute_cb_opcode(&mut self, instruction: InstructionCB, mem: &Memory) {
         use InstructionCB::*;
         match instruction {
-            RLCR8 { operand } => self.rlc_r8(operand),
-            RRCR8 { operand } => self.rrc_r8(operand),
-            RLR8 { operand } => self.rl_r8(operand),
-            RRR8 { operand } => self.rr_r8(operand),
-            SLAR8 { operand } => self.sla_r8(operand),
-            SRAR8 { operand } => self.sra_r8(operand),
-            SwapR8 { operand } => self.swap_r8(operand),
-            SRLR8 { operand } => self.srl_r8(operand),
+            RLCR8 { operand } => self.rlc_r8(operand, mem),
+            RRCR8 { operand } => self.rrc_r8(operand, mem),
+            RLR8 { operand } => self.rl_r8(operand, mem),
+            RRR8 { operand } => self.rr_r8(operand, mem),
+            SLAR8 { operand } => self.sla_r8(operand, mem),
+            SRAR8 { operand } => self.sra_r8(operand, mem),
+            SwapR8 { operand } => self.swap_r8(operand, mem),
+            SRLR8 { operand } => self.srl_r8(operand, mem),
             _ => {
                 println!("Not implemented: {:?}", instruction);
             }
         }
     }
-    fn execute_opcode(&mut self, instruction: Instruction) {
+    fn execute_opcode(&mut self, instruction: Instruction, mem: &mut Memory) {
         use Instruction::*;
         match instruction {
             // block 0
             Nop => self.nop(),
-            LdR16Imm16 { dest } => self.ld_r16_imm16(dest),
-            LdR16MemA { dest } => self.ld_r16mem_a(dest),
-            LdAR16Mem { source } => self.ld_a_r16mem(source),
-            LdImm16SP => self.ld_imm16_sp(),
+            LdR16Imm16 { dest } => self.ld_r16_imm16(dest, mem),
+            LdR16MemA { dest } => self.ld_r16mem_a(dest, mem),
+            LdAR16Mem { source } => self.ld_a_r16mem(source, mem),
+            LdImm16SP => self.ld_imm16_sp(mem),
             IncR16 { operand } => self.inc_r16(operand),
             DecR16 { operand } => self.dec_r16(operand),
             AddHLR16 { operand } => self.add_hl_r16(operand),
-            IncR8 { operand } => self.inc_r8(operand),
-            DecR8 { operand } => self.dec_r8(operand),
-            LdR8Imm8 { dest } => self.ld_r8_imm8(dest),
+            IncR8 { operand } => self.inc_r8(operand, mem),
+            DecR8 { operand } => self.dec_r8(operand, mem),
+            LdR8Imm8 { dest } => self.ld_r8_imm8(dest, mem),
             RLCA => self.rlca(),
             RRCA => self.rrca(),
             RLA => self.rla(),
@@ -142,70 +135,70 @@ impl Cpu {
             CPL => self.cpl(),
             SCF => self.scf(),
             CCF => self.ccf(),
-            JRImm8 => self.jr_imm8(),
-            JRCondImm8 { cond } => self.jr_cond_imm8(cond),
-            Stop => self.stop(),
+            JRImm8 => self.jr_imm8(mem),
+            JRCondImm8 { cond } => self.jr_cond_imm8(cond, mem),
+            Stop => self.stop(mem),
 
             // block 1
-            Halt => self.halt(),
-            LdR8R8 { dest, source } => self.ld_r8_r8(dest, source),
+            Halt => self.halt(mem),
+            LdR8R8 { dest, source } => self.ld_r8_r8(dest, source, mem),
 
             // block 2
-            AddAR8 { operand } => self.add_a_r8(operand),
-            AdcAR8 { operand } => self.adc_a_r8(operand),
-            SubAR8 { operand } => self.sub_a_r8(operand),
-            SbcAR8 { operand } => self.sbc_a_r8(operand),
-            AndAR8 { operand } => self.and_a_r8(operand),
-            XorAR8 { operand } => self.xor_a_r8(operand),
-            OrAR8 { operand } => self.or_a_r8(operand),
-            CpAR8 { operand } => self.cp_a_r8(operand),
+            AddAR8 { operand } => self.add_a_r8(operand, mem),
+            AdcAR8 { operand } => self.adc_a_r8(operand, mem),
+            SubAR8 { operand } => self.sub_a_r8(operand, mem),
+            SbcAR8 { operand } => self.sbc_a_r8(operand, mem),
+            AndAR8 { operand } => self.and_a_r8(operand, mem),
+            XorAR8 { operand } => self.xor_a_r8(operand, mem),
+            OrAR8 { operand } => self.or_a_r8(operand, mem),
+            CpAR8 { operand } => self.cp_a_r8(operand, mem),
 
             // block 3
-            AddAImm8 => self.add_a_imm8(),
-            AdcAImm8 => self.adc_a_imm8(),
-            SubAImm8 => self.sub_a_imm8(),
-            SbcAImm8 => self.sbc_a_imm8(),
-            AndAImm8 => self.and_a_imm8(),
-            XorAImm8 => self.xor_a_imm8(),
-            OrAImm8 => self.or_a_imm8(),
-            CpAImm8 => self.cp_a_imm8(),
-            RetCond { cond } => self.ret_cond(cond),
-            Ret => self.ret(),
-            RetI => self.ret_i(),
-            JpCondImm16 { cond } => self.jp_cond_imm16(cond),
-            JpImm16 => self.jp_imm16(),
+            AddAImm8 => self.add_a_imm8(mem),
+            AdcAImm8 => self.adc_a_imm8(mem),
+            SubAImm8 => self.sub_a_imm8(mem),
+            SbcAImm8 => self.sbc_a_imm8(mem),
+            AndAImm8 => self.and_a_imm8(mem),
+            XorAImm8 => self.xor_a_imm8(mem),
+            OrAImm8 => self.or_a_imm8(mem),
+            CpAImm8 => self.cp_a_imm8(mem),
+            RetCond { cond } => self.ret_cond(cond, mem),
+            Ret => self.ret(mem),
+            RetI => self.ret_i(mem),
+            JpCondImm16 { cond } => self.jp_cond_imm16(cond, mem),
+            JpImm16 => self.jp_imm16(mem),
             JpHL => self.jp_hl(),
-            CallCondImm16 { cond } => self.call_cond_imm16(cond),
-            CallImm16 => self.call_imm16(),
-            RstTgt3 { target } => self.rst_tgt3(target),
-            PopR16Stk { reg } => self.pop_r16_stk(reg),
-            PushR16Stk { reg } => self.push_r16_stk(reg),
-            Prefix => self.prefix(),
-            LdhCA => self.ldh_c_a(),
-            LdhImm8A => self.ldh_imm8_a(),
-            LdImm16A => self.ld_imm16_a(),
-            LdhAC => self.ldh_a_c(),
-            LdhAImm8 => self.ldh_a_imm8(),
-            LdAImm16 => self.ld_a_imm16(),
-            AddSPImm8 => self.add_sp_e8(),
-            LdHLSPImm8 => self.ld_hl_sp_e8(),
+            CallCondImm16 { cond } => self.call_cond_imm16(cond, mem),
+            CallImm16 => self.call_imm16(mem),
+            RstTgt3 { target } => self.rst_tgt3(target, mem),
+            PopR16Stk { reg } => self.pop_r16_stk(reg, mem),
+            PushR16Stk { reg } => self.push_r16_stk(reg, mem),
+            Prefix => self.prefix(mem),
+            LdhCA => self.ldh_c_a(mem),
+            LdhImm8A => self.ldh_imm8_a(mem),
+            LdImm16A => self.ld_imm16_a(mem),
+            LdhAC => self.ldh_a_c(mem),
+            LdhAImm8 => self.ldh_a_imm8(mem),
+            LdAImm16 => self.ld_a_imm16(mem),
+            AddSPImm8 => self.add_sp_e8(mem),
+            LdHLSPImm8 => self.ld_hl_sp_e8(mem),
             LdSPHL => self.ld_sp_hl(),
-            DI => self.di(),
-            EI => self.ei(),
+            DI => self.di(mem),
+            EI => self.ei(mem),
             Data { byte } => error!("Instruction {:#010b} is invalid!", byte),
         };
     }
-    pub fn step(&mut self) {
-        let byte = self.fetch_byte();
+    pub fn step(&mut self, mem: &mut Memory) {
+        let byte = self.fetch_byte(mem);
         let opcode = self.resolve_opcode(byte);
         debug!("{:#06X} -> {:?}", self.pc(), opcode);
-        self.execute_opcode(opcode);
+        self.execute_opcode(opcode, mem);
         self.inc_pc();
     }
-    pub fn step_cb(&mut self) {
-        let byte = self.fetch_byte();
+    pub fn step_cb(&mut self, mem: &Memory) {
+        let byte = self.fetch_byte(mem);
         let opcode = self.resolve_cb_opcode(byte);
-        self.execute_cb_opcode(opcode);
+        self.execute_cb_opcode(opcode, mem);
         self.inc_pc();
     }
 
@@ -302,11 +295,11 @@ impl Cpu {
             byte as i8
         }
     }
-    fn get_r8(&self, operand: u8) -> u8 {
+    fn get_r8(&self, operand: u8, mem: &Memory) -> u8 {
         use super::registers::RegResult;
         let r8 = self.reg.get_r8(operand);
         let r8_val: Result<u8, _> = match r8 {
-            Ok(RegResult::Defer) => Ok(self.mem[self.reg.hl() as usize]),
+            Ok(RegResult::Defer) => Ok(mem[self.reg.hl() as usize]),
             Ok(RegResult::ReturnU8 { val }) => Ok(val),
             Ok(_) => unreachable!("Unexpected RegResult variant"),
             Err(e) => Err(e),
@@ -331,32 +324,32 @@ impl Cpu {
 impl Cpu {
     fn nop(&self) {}
 
-    fn ld_r16_imm16(&mut self, dest: u8) {
-        let val = self.imm16_unsigned();
+    fn ld_r16_imm16(&mut self, dest: u8, mem: &Memory) {
+        let val = self.imm16_unsigned(mem);
         self.reg.set_r16(val, dest);
     }
 
-    fn ld_r16mem_a(&mut self, dest: u8) {
+    fn ld_r16mem_a(&mut self, dest: u8, mem: &mut Memory) {
         let location = self.reg.get_r16mem(dest).expect("Invalid r16mem register") as usize;
-        self.mem[location] = self.reg.a();
+        mem[location] = self.reg.a();
     }
 
-    fn ld_a_r16mem(&mut self, source: u8) {
+    fn ld_a_r16mem(&mut self, source: u8, mem: &Memory) {
         let location = self
             .reg
             .get_r16mem(source)
             .expect("Invalid r16mem register") as usize;
-        self.reg.set_a(self.mem[location]);
+        self.reg.set_a(mem[location]);
     }
 
     // Copy SP & $FF at address n16 and SP >> 8 at address n16 + 1.
-    fn ld_imm16_sp(&mut self) {
+    fn ld_imm16_sp(&mut self, mem: &mut Memory) {
         let sp = self.reg.sp();
 
-        let location = self.imm16_unsigned() as usize;
+        let location = self.imm16_unsigned(mem) as usize;
 
-        self.mem[location] = (sp & 0xFF) as u8;
-        self.mem[location + 1] = (sp >> 8) as u8;
+        mem[location] = (sp & 0xFF) as u8;
+        mem[location + 1] = (sp >> 8) as u8;
     }
 
     fn inc_r16(&mut self, operand: u8) {
@@ -388,14 +381,14 @@ impl Cpu {
         self.reg.set_f(flags);
     }
 
-    fn inc_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn inc_r8(&mut self, operand: u8, mem: &mut Memory) {
+        let val = self.get_r8(operand, mem);
 
         let res = val.wrapping_add(1);
         let write_result = self.reg.set_r8(res, operand);
         use super::registers::RegResult;
         match write_result {
-            RegResult::Defer => self.mem[self.reg.hl() as usize] = res,
+            RegResult::Defer => mem[self.reg.hl() as usize] = res,
             RegResult::Success => {}
             _ => {
                 panic!("Invalid RegResult!")
@@ -413,13 +406,13 @@ impl Cpu {
         flags |= Self::preserve_flag(self.reg.f(), flags::C);
         self.reg.set_f(flags);
     }
-    fn dec_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn dec_r8(&mut self, operand: u8, mem: &mut Memory) {
+        let val = self.get_r8(operand, mem);
         let res = val.wrapping_sub(1);
         let write_result = self.reg.set_r8(res, operand);
         use super::registers::RegResult;
         match write_result {
-            RegResult::Defer => self.mem[self.reg.hl() as usize] = res,
+            RegResult::Defer => mem[self.reg.hl() as usize] = res,
             RegResult::Success => {}
             _ => {
                 panic!("Invalid RegResult!")
@@ -437,13 +430,13 @@ impl Cpu {
         flags |= Self::preserve_flag(self.reg.f(), flags::C);
         self.reg.set_f(flags);
     }
-    fn ld_r8_imm8(&mut self, dest: u8) {
-        let byte = self.imm8_unsigned();
+    fn ld_r8_imm8(&mut self, dest: u8, mem: &mut Memory) {
+        let byte = self.imm8_unsigned(mem);
         let write_result = self.reg.set_r8(byte, dest);
         use super::registers::RegResult;
         match write_result {
             RegResult::Success => {}
-            RegResult::Defer => self.mem[self.reg.hl() as usize] = byte,
+            RegResult::Defer => mem[self.reg.hl() as usize] = byte,
             _ => panic!("Unexpected RegResult"),
         }
     }
@@ -564,8 +557,8 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn jr_imm8(&mut self) {
-        let relative_value: i8 = self.imm8_signed();
+    fn jr_imm8(&mut self, mem: &Memory) {
+        let relative_value: i8 = self.imm8_signed(mem);
         match 0.cmp(&relative_value) {
             std::cmp::Ordering::Greater => self
                 .reg
@@ -575,8 +568,8 @@ impl Cpu {
                 .set_pc(self.pc().wrapping_add(relative_value as u16)),
         }
     }
-    fn jr_cond_imm8(&mut self, cond: u8) {
-        let relative_value = self.imm8_signed();
+    fn jr_cond_imm8(&mut self, cond: u8, mem: &Memory) {
+        let relative_value = self.imm8_signed(mem);
         if self.resolve_condition(cond).unwrap() {
             match 0.cmp(&relative_value) {
                 std::cmp::Ordering::Greater => self
@@ -588,24 +581,24 @@ impl Cpu {
             }
         }
     }
-    fn stop(&mut self) {
-        debug!("{:?}", self.fetch_byte());
+    fn stop(&mut self, mem: &Memory) {
+        debug!("{:?}", self.fetch_byte(mem));
         todo!()
     }
 }
 impl Cpu {
     // block 1
-    fn halt(&mut self) {
-        debug!("{:?}", self.fetch_byte());
+    fn halt(&mut self, mem: &Memory) {
+        debug!("{:?}", self.fetch_byte(mem));
         todo!()
     }
-    fn ld_r8_r8(&mut self, dest: u8, source: u8) {
-        let val = self.get_r8(source);
+    fn ld_r8_r8(&mut self, dest: u8, source: u8, mem: &mut Memory) {
+        let val = self.get_r8(source, mem);
 
         let write_result = self.reg.set_r8(val, dest);
         use super::registers::RegResult;
         match write_result {
-            RegResult::Defer => self.mem[self.reg.hl() as usize] = val,
+            RegResult::Defer => mem[self.reg.hl() as usize] = val,
             RegResult::Success => {}
             RegResult::Failure => panic!("Invalid reg result"),
             _ => panic!("Unexpected reg result"),
@@ -614,8 +607,8 @@ impl Cpu {
 }
 impl Cpu {
     // block 2
-    fn add_a_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn add_a_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem);
         let result = self.reg.a().wrapping_add(val);
 
         let mut flags = 0x00;
@@ -632,8 +625,8 @@ impl Cpu {
         self.reg.set_a(result);
         self.reg.set_f(flags);
     }
-    fn adc_a_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn adc_a_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem);
         let a_val = self.reg.a();
         let carry = self.reg.f() & flags::C == flags::C;
 
@@ -653,8 +646,8 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn sub_a_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn sub_a_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem);
         let a_val = self.reg.a();
         let result = a_val.wrapping_sub(val);
 
@@ -673,8 +666,8 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn sbc_a_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn sbc_a_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem);
         let a_val = self.reg.a();
         let carry = self.reg.f() & flags::C == flags::C;
 
@@ -696,8 +689,8 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn and_a_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn and_a_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem);
         let a_val = self.reg.a();
         let result = val & a_val;
 
@@ -712,8 +705,8 @@ impl Cpu {
         // C is 0
         self.reg.set_f(flags);
     }
-    fn xor_a_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn xor_a_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem);
         let a_val = self.reg.a();
         // debug!("Before: {:?}", self.reg);
         let result = val ^ a_val;
@@ -728,8 +721,8 @@ impl Cpu {
         self.reg.set_f(flags);
         // debug!("After: {:?}", self.reg);
     }
-    fn or_a_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn or_a_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem);
         let a_val = self.reg.a();
         let result = val | a_val;
 
@@ -743,8 +736,8 @@ impl Cpu {
         self.reg.set_f(flags);
     }
     //CP A, r8 discards the result of the operation, just setting flags based on the operation
-    fn cp_a_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn cp_a_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem);
         let a_val = self.reg.a();
         let result = a_val.wrapping_sub(val);
 
@@ -764,11 +757,11 @@ impl Cpu {
 }
 impl Cpu {
     // block 3
-    fn add_a_imm8(&mut self) {
+    fn add_a_imm8(&mut self, mem: &Memory) {
         let a_val = self.reg.a();
 
         self.inc_pc();
-        let val = self.fetch_byte();
+        let val = self.fetch_byte(mem);
 
         let result = val.wrapping_add(a_val);
 
@@ -786,11 +779,11 @@ impl Cpu {
         self.reg.set_a(result);
         self.reg.set_f(flags);
     }
-    fn adc_a_imm8(&mut self) {
+    fn adc_a_imm8(&mut self, mem: &Memory) {
         let a_val = self.reg.a();
 
         self.inc_pc();
-        let val = self.fetch_byte();
+        let val = self.fetch_byte(mem);
         let carry = self.reg.f() & flags::C == flags::C;
 
         let result = val.wrapping_add(a_val).wrapping_add(carry as u8);
@@ -809,11 +802,11 @@ impl Cpu {
         self.reg.set_a(result);
         self.reg.set_f(flags);
     }
-    fn sub_a_imm8(&mut self) {
+    fn sub_a_imm8(&mut self, mem: &Memory) {
         let a_val = self.reg.a();
 
         self.inc_pc();
-        let val = self.fetch_byte();
+        let val = self.fetch_byte(mem);
 
         let result = a_val.wrapping_sub(val);
 
@@ -831,9 +824,9 @@ impl Cpu {
         self.reg.set_a(result);
         self.reg.set_f(flags);
     }
-    fn sbc_a_imm8(&mut self) {
+    fn sbc_a_imm8(&mut self, mem: &Memory) {
         let a_val = self.reg.a();
-        let val = self.imm8_unsigned();
+        let val = self.imm8_unsigned(mem);
 
         let carry = self.reg.f() & flags::C == flags::C;
 
@@ -854,9 +847,9 @@ impl Cpu {
         self.reg.set_a(result);
         self.reg.set_f(flags);
     }
-    fn and_a_imm8(&mut self) {
+    fn and_a_imm8(&mut self, mem: &Memory) {
         let a_val = self.reg.a();
-        let val = self.imm8_unsigned();
+        let val = self.imm8_unsigned(mem);
 
         let result = val & a_val;
 
@@ -872,9 +865,9 @@ impl Cpu {
         self.reg.set_a(result);
         self.reg.set_f(flags);
     }
-    fn xor_a_imm8(&mut self) {
+    fn xor_a_imm8(&mut self, mem: &Memory) {
         let a_val = self.reg.a();
-        let val = self.imm8_unsigned();
+        let val = self.imm8_unsigned(mem);
 
         let result = val ^ a_val;
 
@@ -885,9 +878,9 @@ impl Cpu {
         // N, H, and C is 0
         self.reg.set_f(flags);
     }
-    fn or_a_imm8(&mut self) {
+    fn or_a_imm8(&mut self, mem: &Memory) {
         let a_val = self.reg.a();
-        let val = self.imm8_unsigned();
+        let val = self.imm8_unsigned(mem);
 
         let result = val | a_val;
 
@@ -900,9 +893,9 @@ impl Cpu {
         self.reg.set_f(flags);
     }
     //CP A, r8 discards the result of the operation, just setting flags based on the operation
-    fn cp_a_imm8(&mut self) {
+    fn cp_a_imm8(&mut self, mem: &Memory) {
         let a_val = self.reg.a();
-        let val = self.imm8_unsigned();
+        let val = self.imm8_unsigned(mem);
         let result = a_val.wrapping_sub(val);
 
         let mut flags = 0x00;
@@ -919,30 +912,30 @@ impl Cpu {
         self.reg.set_a(result);
         self.reg.set_f(flags);
     }
-    fn ret_cond(&mut self, cond: u8) {
+    fn ret_cond(&mut self, cond: u8, mem: &Memory) {
         if self.resolve_condition(cond).unwrap() {
-            let new_pc = self.pop_stack();
+            let new_pc = self.pop_stack(mem);
             self.reg.set_pc(new_pc);
         }
     }
-    fn ret(&mut self) {
-        let new_pc = self.pop_stack();
+    fn ret(&mut self, mem: &Memory) {
+        let new_pc = self.pop_stack(mem);
         self.reg.set_pc(new_pc);
     }
-    fn ret_i(&mut self) {
-        self.ei();
-        self.ret();
+    fn ret_i(&mut self, mem: &Memory) {
+        self.ei(mem);
+        self.ret(mem);
     }
-    fn jp_cond_imm16(&mut self, cond: u8) {
-        let dest_addr = self.imm16_unsigned();
+    fn jp_cond_imm16(&mut self, cond: u8, mem: &Memory) {
+        let dest_addr = self.imm16_unsigned(mem);
         if self.resolve_condition(cond).unwrap() {
             debug!("Jumping to {:#018b} aka {:#06X}", dest_addr, dest_addr);
             self.reg.set_pc(dest_addr);
             self.dec_pc();
         }
     }
-    fn jp_imm16(&mut self) {
-        let dest_addr = self.imm16_unsigned();
+    fn jp_imm16(&mut self, mem: &Memory) {
+        let dest_addr = self.imm16_unsigned(mem);
         debug!("Jumping to {:#018b} aka {:#06X}", dest_addr, dest_addr);
         self.reg.set_pc(dest_addr);
         self.dec_pc();
@@ -952,90 +945,90 @@ impl Cpu {
         self.reg.set_pc(hl);
         self.dec_pc();
     }
-    fn call_cond_imm16(&mut self, cond: u8) {
-        let call_addr = self.imm16_unsigned();
+    fn call_cond_imm16(&mut self, cond: u8, mem: &mut Memory) {
+        let call_addr = self.imm16_unsigned(mem);
         if self.resolve_condition(cond).unwrap() {
             self.dec_sp();
             let sp = self.sp() as usize;
-            self.mem[sp] = (self.pc() >> 8) as u8;
+            mem[sp] = (self.pc() >> 8) as u8;
 
             self.dec_sp();
             let sp = self.sp() as usize;
-            self.mem[sp] = (self.pc() & 0xFF) as u8;
+            mem[sp] = (self.pc() & 0xFF) as u8;
             self.reg.set_pc(call_addr);
         }
     }
-    fn call_imm16(&mut self) {
-        let call_addr = self.imm16_unsigned();
+    fn call_imm16(&mut self, mem: &mut Memory) {
+        let call_addr = self.imm16_unsigned(mem);
 
         self.dec_sp();
         let sp = self.sp() as usize;
-        self.mem[sp] = (self.pc() >> 8) as u8;
+        mem[sp] = (self.pc() >> 8) as u8;
 
         self.dec_sp();
         let sp = self.sp() as usize;
-        self.mem[sp] = (self.pc() & 0xFF) as u8;
+        mem[sp] = (self.pc() & 0xFF) as u8;
 
         self.reg.set_pc(call_addr);
     }
-    fn rst_tgt3(&mut self, target: u8) {
+    fn rst_tgt3(&mut self, target: u8, mem: &mut Memory) {
         let call_addr = (target as u16) << 8;
         if self.reg.f() & flags::Z == flags::Z {
             self.dec_sp();
             let sp = self.sp() as usize;
-            self.mem[sp] = (self.pc() >> 8) as u8;
+            mem[sp] = (self.pc() >> 8) as u8;
 
             self.dec_sp();
             let sp = self.sp() as usize;
-            self.mem[sp] = (self.pc() & 0xFF) as u8;
+            mem[sp] = (self.pc() & 0xFF) as u8;
         }
 
         self.reg.set_pc(call_addr);
     }
-    fn pop_r16_stk(&mut self, reg: u8) {
-        let val: u16 = self.pop_stack();
+    fn pop_r16_stk(&mut self, reg: u8, mem: &Memory) {
+        let val: u16 = self.pop_stack(mem);
         self.reg.set_r16stk(val, reg);
     }
-    fn push_r16_stk(&mut self, reg: u8) {
+    fn push_r16_stk(&mut self, reg: u8, mem: &mut Memory) {
         let val: u16 = self.reg.get_r16stk(reg).expect("Invalid r16 register");
 
         self.dec_sp();
         let sp = self.sp() as usize;
-        self.mem[sp] = (val >> 8) as u8;
+        mem[sp] = (val >> 8) as u8;
 
         self.dec_sp();
         let sp = self.sp() as usize;
-        self.mem[sp] = (val & 0xFF) as u8;
+        mem[sp] = (val & 0xFF) as u8;
     }
-    fn prefix(&mut self) {
-        self.step_cb();
+    fn prefix(&mut self, mem: &Memory) {
+        self.step_cb(mem);
     }
-    fn ldh_c_a(&mut self) {
+    fn ldh_c_a(&mut self, mem: &mut Memory) {
         let addr = 0xFF00 + self.reg.c() as usize;
-        self.mem[addr] = self.reg.a();
+        mem[addr] = self.reg.a();
     }
-    fn ldh_imm8_a(&mut self) {
-        let addr = 0xFF00 + self.imm8_unsigned() as usize;
-        self.mem[addr] = self.reg.a();
+    fn ldh_imm8_a(&mut self, mem: &mut Memory) {
+        let addr = 0xFF00 + self.imm8_unsigned(mem) as usize;
+        mem[addr] = self.reg.a();
     }
-    fn ld_imm16_a(&mut self) {
-        let addr = self.imm16_unsigned() as usize;
-        self.reg.set_a(self.mem[addr]);
+    fn ld_imm16_a(&mut self, mem: &Memory) {
+        let addr = self.imm16_unsigned(mem) as usize;
+        self.reg.set_a(mem[addr]);
     }
-    fn ldh_a_c(&mut self) {
+    fn ldh_a_c(&mut self, mem: &Memory) {
         let addr = 0xFF00 + self.reg.c() as usize;
-        self.reg.set_a(self.mem[addr]);
+        self.reg.set_a(mem[addr]);
     }
-    fn ldh_a_imm8(&mut self) {
-        let addr = 0xFF00 + self.imm8_unsigned() as usize;
-        self.reg.set_a(self.mem[addr]);
+    fn ldh_a_imm8(&mut self, mem: &Memory) {
+        let addr = 0xFF00 + self.imm8_unsigned(mem) as usize;
+        self.reg.set_a(mem[addr]);
     }
-    fn ld_a_imm16(&mut self) {
-        let addr = self.imm16_unsigned() as usize;
-        self.reg.set_a(self.mem[addr]);
+    fn ld_a_imm16(&mut self, mem: &Memory) {
+        let addr = self.imm16_unsigned(mem) as usize;
+        self.reg.set_a(mem[addr]);
     }
-    fn add_sp_e8(&mut self) {
-        let val = self.imm8_signed();
+    fn add_sp_e8(&mut self, mem: &Memory) {
+        let val = self.imm8_signed(mem);
         let sp = self.sp();
 
         let result = (sp as i16 + val as i16) as u16;
@@ -1051,8 +1044,8 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn ld_hl_sp_e8(&mut self) {
-        let val = self.imm8_signed();
+    fn ld_hl_sp_e8(&mut self, mem: &Memory) {
+        let val = self.imm8_signed(mem);
         let sp = self.sp();
 
         let result = (sp as i16 + val as i16) as u16;
@@ -1072,19 +1065,19 @@ impl Cpu {
         let val = self.reg.hl();
         self.reg.set_sp(val);
     }
-    fn di(&mut self) {
-        debug!("{:?}", self.fetch_byte());
+    fn di(&mut self, mem: &Memory) {
+        debug!("{:?}", self.fetch_byte(mem));
         self.ime = false;
     }
-    fn ei(&mut self) {
-        debug!("{:?}", self.fetch_byte());
+    fn ei(&mut self, mem: &Memory) {
+        debug!("{:?}", self.fetch_byte(mem));
         todo!()
     }
 }
 
 impl Cpu {
-    fn rlc_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand).rotate_left(1);
+    fn rlc_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem).rotate_left(1);
 
         let mut flags = 0x00;
         if val == 0 {
@@ -1096,8 +1089,8 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn rrc_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand).rotate_right(1);
+    fn rrc_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem).rotate_right(1);
 
         let mut flags = 0x00;
         if val == 0 {
@@ -1109,11 +1102,11 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn rl_r8(&mut self, operand: u8) {
+    fn rl_r8(&mut self, operand: u8, mem: &Memory) {
         let c_flag: bool = self.reg.f() & flags::C == flags::C;
-        let set_c: bool = self.get_r8(operand) & 0x80 == 0x80;
+        let set_c: bool = self.get_r8(operand, mem) & 0x80 == 0x80;
 
-        let mut result = self.get_r8(operand) << 1;
+        let mut result = self.get_r8(operand, mem) << 1;
         if c_flag {
             result |= 0x01;
         }
@@ -1129,11 +1122,11 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn rr_r8(&mut self, operand: u8) {
+    fn rr_r8(&mut self, operand: u8, mem: &Memory) {
         let c_flag: bool = self.reg.f() & flags::C == flags::C;
-        let set_c: bool = self.get_r8(operand) & 0x01 == 0x01;
+        let set_c: bool = self.get_r8(operand, mem) & 0x01 == 0x01;
 
-        let mut result = self.get_r8(operand) >> 1;
+        let mut result = self.get_r8(operand, mem) >> 1;
         if c_flag {
             result |= 0x80;
         }
@@ -1149,10 +1142,10 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn sla_r8(&mut self, operand: u8) {
-        let set_c: bool = self.get_r8(operand) & 0x80 == 0x80;
+    fn sla_r8(&mut self, operand: u8, mem: &Memory) {
+        let set_c: bool = self.get_r8(operand, mem) & 0x80 == 0x80;
 
-        let result = self.get_r8(operand) << 1;
+        let result = self.get_r8(operand, mem) << 1;
         self.reg.set_r8(result, operand);
 
         let mut flags = 0x00;
@@ -1165,10 +1158,10 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn sra_r8(&mut self, operand: u8) {
-        let set_c: bool = self.get_r8(operand) & 0x01 == 0x01;
+    fn sra_r8(&mut self, operand: u8, mem: &Memory) {
+        let set_c: bool = self.get_r8(operand, mem) & 0x01 == 0x01;
 
-        let result = self.get_r8(operand) >> 1;
+        let result = self.get_r8(operand, mem) >> 1;
         self.reg.set_r8(result, operand);
 
         let mut flags = 0x00;
@@ -1181,8 +1174,8 @@ impl Cpu {
         }
         self.reg.set_f(flags);
     }
-    fn swap_r8(&mut self, operand: u8) {
-        let val = self.get_r8(operand);
+    fn swap_r8(&mut self, operand: u8, mem: &Memory) {
+        let val = self.get_r8(operand, mem);
         let low = val & 0x0F;
         let high = val & 0xF0;
 
@@ -1196,10 +1189,10 @@ impl Cpu {
         // N, H, and C are 0
         self.reg.set_f(flags);
     }
-    fn srl_r8(&mut self, operand: u8) {
-        let set_c = self.get_r8(operand) & 0x01 == 0x01;
+    fn srl_r8(&mut self, operand: u8, mem: &Memory) {
+        let set_c = self.get_r8(operand, mem) & 0x01 == 0x01;
 
-        let result = self.get_r8(operand) >> 1;
+        let result = self.get_r8(operand, mem) >> 1;
         self.reg.set_r8(result, operand);
 
         let mut flags = 0x00;
@@ -1216,35 +1209,30 @@ impl Cpu {
 
 #[cfg(test)]
 mod test {
+    use crate::hardware::memory::Memory;
+
     use super::Cpu;
     use super::Instruction;
 
     const DEFAULT_FLAG: u8 = 0xC0;
 
-    fn setup(instructions: Vec<Instruction>, flags: Option<u8>) -> Cpu {
+    fn setup(instructions: Vec<Instruction>, flags: Option<u8>) -> (Cpu, Memory) {
         let mut cpu = Cpu::new();
+        let mut mem = Memory::new();
         if let Some(flag_bit) = flags {
             cpu.reg.set_f(flag_bit)
         } else {
             cpu.reg.set_f(DEFAULT_FLAG);
         }
         for i in 0..instructions.len() {
-            cpu.mem[0x100 + i] = u8::from(instructions[i]);
+            mem[0x100 + i] = u8::from(instructions[i]);
         }
-        // cpu.mem[0x100] = u8::from(Instruction::Nop);
-        cpu
+        // mem[0x100] = u8::from(Instruction::Nop);
+        (cpu, mem)
     }
 
     mod general {
         use super::Cpu;
-        // xor value with mask, then or it with other 1-mask, then check if 0
-        #[test]
-        fn read_first_instruction() {
-            let cpu = Cpu::new_with_cart("./roms/tetris.gb");
-            assert_eq!(cpu.mem[0x100], 0b00000000);
-            assert_eq!(cpu.mem[0x101], 0b11000011);
-        }
-
         #[test]
         fn test_half_carry_add_8() {
             assert_eq!(Cpu::half_carry_add_8(0x0F, 0x01), true);
@@ -1288,8 +1276,8 @@ mod test {
 
         #[test]
         fn test_nop() {
-            let mut cpu = setup(vec![Instruction::Nop], None);
-            cpu.step();
+            let (mut cpu, mut mem) = setup(vec![Instruction::Nop], None);
+            cpu.step(&mut mem);
 
             let mut result_reg = Registers::default();
             result_reg.set_pc(0x101);
@@ -1301,7 +1289,7 @@ mod test {
 
         #[test]
         fn test_ld_r16_imm16() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::LdR16Imm16 { dest: 0 },
                     Instruction::Data { byte: 0b_0000_1111 },
@@ -1319,24 +1307,24 @@ mod test {
                 None,
             );
 
-            cpu.step();
+            cpu.step(&mut mem);
             let mut result_reg = Registers::default();
             result_reg.set_pc(0x103);
             result_reg.set_f(DEFAULT_FLAG);
             result_reg.set_bc(0b_1010_1010_0000_1111);
             assert_eq!(cpu.reg, result_reg);
 
-            cpu.step();
+            cpu.step(&mut mem);
             result_reg.set_pc(0x106);
             result_reg.set_de(0b_0101_0101_1111_0000);
             assert_eq!(cpu.reg, result_reg);
 
-            cpu.step();
+            cpu.step(&mut mem);
             result_reg.set_pc(0x109);
             result_reg.set_hl(0b_0011_1100_1100_0011);
             assert_eq!(cpu.reg, result_reg);
 
-            cpu.step();
+            cpu.step(&mut mem);
             result_reg.set_pc(0x10C);
             result_reg.set_sp(0b_1000_0001_1110_0111);
             assert_eq!(cpu.reg, result_reg);
@@ -1344,7 +1332,7 @@ mod test {
 
         #[test]
         fn test_ld_r16mem_a() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::LdR16MemA { dest: 0 }, // BC
                     Instruction::LdR16MemA { dest: 1 }, // DE
@@ -1361,63 +1349,63 @@ mod test {
             cpu.reg.set_hl(0x8200);
             cpu.reg.set_a(0x12);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0x12);
             assert_eq!(cpu.reg.f(), 0xC0);
-            assert_eq!(cpu.mem[cpu.reg.bc() as usize], 0x12);
+            assert_eq!(mem[cpu.reg.bc() as usize], 0x12);
 
             cpu.reg.set_a(0xFF);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0xFF);
-            assert_eq!(cpu.mem[cpu.reg.de() as usize], 0xFF);
+            assert_eq!(mem[cpu.reg.de() as usize], 0xFF);
 
             cpu.reg.set_a(0x0F);
             let old_hl = cpu.reg.hl();
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0x0F);
             assert_eq!(cpu.reg.hl(), 0x8201);
-            assert_eq!(cpu.mem[old_hl as usize], 0x0F);
+            assert_eq!(mem[old_hl as usize], 0x0F);
 
             cpu.reg.set_a(0xF0);
             let old_hl = cpu.reg.hl();
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0xF0);
             assert_eq!(cpu.reg.hl(), 0x8200);
-            assert_eq!(cpu.mem[old_hl as usize], 0xF0);
+            assert_eq!(mem[old_hl as usize], 0xF0);
 
             cpu.reg.set_a(0x01);
             let old_hl = cpu.reg.hl();
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0x01);
             assert_eq!(cpu.reg.hl(), 0x81FF);
-            assert_eq!(cpu.mem[old_hl as usize], 0x01);
+            assert_eq!(mem[old_hl as usize], 0x01);
 
             cpu.reg.set_a(0x02);
             cpu.reg.set_hl(0x0000);
             let old_hl = cpu.reg.hl();
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0x02);
             assert_eq!(cpu.reg.hl(), 0xFFFF);
-            assert_eq!(cpu.mem[old_hl as usize], 0x02);
+            assert_eq!(mem[old_hl as usize], 0x02);
 
             cpu.reg.set_a(0x0C);
             cpu.reg.set_hl(0xFFFF);
             let old_hl = cpu.reg.hl();
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0x0C);
             assert_eq!(cpu.reg.hl(), 0x0000);
-            assert_eq!(cpu.mem[old_hl as usize], 0x0C);
+            assert_eq!(mem[old_hl as usize], 0x0C);
         }
         #[test]
         fn test_ld_a_r16mem() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::LdAR16Mem { source: 0 },
                     Instruction::LdAR16Mem { source: 1 },
@@ -1428,30 +1416,30 @@ mod test {
             );
 
             cpu.reg.set_bc(0x3B87);
-            cpu.mem[0x3B87] = 0b_1011_0100;
-            cpu.step();
+            mem[0x3B87] = 0b_1011_0100;
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.a(), 0b_1011_0100);
 
             cpu.reg.set_de(0xFF12);
-            cpu.mem[0xFF12] = 0b_0100_0101;
-            cpu.step();
+            mem[0xFF12] = 0b_0100_0101;
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.a(), 0b_0100_0101);
 
             cpu.reg.set_hl(0x1234);
-            cpu.mem[0x1234] = 0b_0000_1111;
-            cpu.step();
+            mem[0x1234] = 0b_0000_1111;
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.a(), 0b_0000_1111);
             assert_eq!(cpu.reg.hl(), 0x1235);
 
             cpu.reg.set_hl(0xFF12);
-            cpu.mem[0xFF12] = 0b_0101_1101;
-            cpu.step();
+            mem[0xFF12] = 0b_0101_1101;
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.a(), 0b_0101_1101);
             assert_eq!(cpu.reg.hl(), 0xFF11);
         }
         #[test]
         fn test_ld_imm16_sp() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::LdImm16SP,
                     Instruction::Data { byte: 0xF1 },
@@ -1462,17 +1450,17 @@ mod test {
             cpu.reg.set_sp(0x87BA);
 
             let mut old_regs = cpu.reg;
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             old_regs.set_pc(0x103);
-            assert_eq!(cpu.mem[0x32F1 as usize], 0xBA);
-            assert_eq!(cpu.mem[0x32F2 as usize], 0x87);
+            assert_eq!(mem[0x32F1 as usize], 0xBA);
+            assert_eq!(mem[0x32F2 as usize], 0x87);
             assert_eq!(old_regs, cpu.reg);
         }
         #[test]
         fn test_inc_r16() {
             let init_flags = 0x30;
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::IncR16 { operand: 0 },
                     Instruction::IncR16 { operand: 1 },
@@ -1486,22 +1474,22 @@ mod test {
             cpu.reg.set_hl(0xFFFF);
             cpu.reg.set_sp(0x0000);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.bc(), 0x1235);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.de(), 0x32F0);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.hl(), 0x0000);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.sp(), 0x0001);
             assert_eq!(cpu.reg.f(), init_flags);
@@ -1509,7 +1497,7 @@ mod test {
         #[test]
         fn test_dec_r16() {
             let init_flags = 0x30;
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::DecR16 { operand: 0 },
                     Instruction::DecR16 { operand: 1 },
@@ -1523,22 +1511,22 @@ mod test {
             cpu.reg.set_hl(0xFFFF);
             cpu.reg.set_sp(0x0000);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.bc(), 0x1233);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.de(), 0x32EE);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.hl(), 0xFFFE);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.sp(), 0xFFFF);
             assert_eq!(cpu.reg.f(), init_flags);
@@ -1546,7 +1534,7 @@ mod test {
         #[test]
         fn test_add_hl_r16() {
             let init_flags = 0x00;
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::AddHLR16 { operand: 0 },
                     Instruction::AddHLR16 { operand: 1 },
@@ -1558,24 +1546,24 @@ mod test {
             cpu.reg.set_hl(0x0000);
 
             cpu.reg.set_bc(0x0FFF);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.hl(), 0x0FFF);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_de(0x0001);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.hl(), 0x1000);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.hl(), 0x2000);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_sp(0xE001);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.hl(), 0x0001);
             assert_eq!(cpu.reg.f(), flags::C);
@@ -1583,7 +1571,7 @@ mod test {
         #[test]
         fn test_inc_r8() {
             let init_flags = flags::C;
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::IncR8 { operand: 0 },
                     Instruction::IncR8 { operand: 1 },
@@ -1599,59 +1587,59 @@ mod test {
             );
 
             cpu.reg.set_b(0x00);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.b(), 0x01);
             assert_eq!(cpu.reg.f(), flags::C);
 
             cpu.reg.set_c(0xFF);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.c(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
 
             cpu.reg.set_d(0x0F);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.d(), 0x10);
             assert_eq!(cpu.reg.f(), flags::H | flags::C);
 
             cpu.reg.set_e(0xF3);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.e(), 0xF4);
             assert_eq!(cpu.reg.f(), flags::C);
 
             cpu.reg.set_h(0x1F);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.h(), 0x20);
             assert_eq!(cpu.reg.f(), flags::H | flags::C);
 
             cpu.reg.set_l(0x32);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.l(), 0x33);
             assert_eq!(cpu.reg.f(), flags::C);
 
             cpu.reg.set_hl(0x3212);
-            cpu.mem[0x3212] = 0xFF;
-            cpu.step();
+            mem[0x3212] = 0xFF;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
-            assert_eq!(cpu.mem[0x3212], 0x00);
+            assert_eq!(mem[0x3212], 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
 
             cpu.reg.set_hl(0x3218);
-            cpu.mem[0x3218] = 0x0F;
-            cpu.step();
+            mem[0x3218] = 0x0F;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
-            assert_eq!(cpu.mem[0x3218], 0x10);
+            assert_eq!(mem[0x3218], 0x10);
             assert_eq!(cpu.reg.f(), flags::H | flags::C);
         }
         #[test]
         fn test_dec_r8() {
             let init_flags = flags::C;
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::DecR8 { operand: 0 },
                     Instruction::DecR8 { operand: 1 },
@@ -1667,59 +1655,59 @@ mod test {
             );
 
             cpu.reg.set_b(0x00);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.b(), 0xFF);
             assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
 
             cpu.reg.set_c(0xFF);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.c(), 0xFE);
             assert_eq!(cpu.reg.f(), flags::N | flags::C);
 
             cpu.reg.set_d(0x0F);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.d(), 0x0E);
             assert_eq!(cpu.reg.f(), flags::N | flags::C);
 
             cpu.reg.set_e(0xF0);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.e(), 0xEF);
             assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
 
             cpu.reg.set_h(0x1F);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.h(), 0x1E);
             assert_eq!(cpu.reg.f(), flags::N | flags::C);
 
             cpu.reg.set_l(0x32);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.l(), 0x31);
             assert_eq!(cpu.reg.f(), flags::N | flags::C);
 
             cpu.reg.set_hl(0x3212);
-            cpu.mem[0x3212] = 0x00;
-            cpu.step();
+            mem[0x3212] = 0x00;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
-            assert_eq!(cpu.mem[0x3212], 0xFF);
+            assert_eq!(mem[0x3212], 0xFF);
             assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
 
             cpu.reg.set_hl(0x3218);
-            cpu.mem[0x3218] = 0x01;
-            cpu.step();
+            mem[0x3218] = 0x01;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
-            assert_eq!(cpu.mem[0x3218], 0x00);
+            assert_eq!(mem[0x3218], 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N | flags::C);
         }
         #[test]
         fn test_ld_r8_imm8() {
             let init_flags = 0xC0;
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::LdR8Imm8 { dest: 0 },
                     Instruction::Data { byte: 0x01 },
@@ -1741,50 +1729,50 @@ mod test {
                 Some(init_flags),
             );
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.b(), 0x01);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.c(), 0xFF);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.d(), 0xF0);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.e(), 0x0F);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10A);
             assert_eq!(cpu.reg.h(), 0x00);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10C);
             assert_eq!(cpu.reg.l(), 0x10);
             assert_eq!(cpu.reg.f(), init_flags);
 
             cpu.reg.set_hl(0x321C);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10E);
-            assert_eq!(cpu.mem[0x321C], 0x78);
+            assert_eq!(mem[0x321C], 0x78);
             assert_eq!(cpu.reg.f(), init_flags);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x110);
             assert_eq!(cpu.reg.a(), 0x87);
             assert_eq!(cpu.reg.f(), init_flags);
         }
         #[test]
         fn test_rlca() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::RLCA,
                     Instruction::RLCA,
@@ -1800,49 +1788,49 @@ mod test {
 
             cpu.reg.set_a(0b_0011_0110);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0b_0110_1100);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0b_1101_1000);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0b_1011_0001);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0b_0110_0011);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0b_1100_0110);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0b_1000_1101);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0b_0001_1011);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0b_0011_0110);
             assert_eq!(cpu.reg.f(), 0x00);
         }
         #[test]
         fn test_rrca() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::RRCA,
                     Instruction::RRCA,
@@ -1858,49 +1846,49 @@ mod test {
 
             cpu.reg.set_a(0b_0011_0110);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0b_0001_1011);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0b_1000_1101);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0b_1100_0110);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0b_0110_0011);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0b_1011_0001);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0b_1101_1000);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0b_0110_1100);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0b_0011_0110);
             assert_eq!(cpu.reg.f(), 0x00);
         }
         #[test]
         fn test_rla() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::RLA,
                     Instruction::RLA,
@@ -1915,49 +1903,49 @@ mod test {
             );
             cpu.reg.set_a(0b_0011_0110);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0b_0110_1100);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0b_1101_1000);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0b_1011_0000);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0b_0110_0001);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0b_1100_0011);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0b_1000_0110);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0b_0000_1101);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0b_0001_1011);
             assert_eq!(cpu.reg.f(), 0x00);
         }
         #[test]
         fn test_rra() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::RRA,
                     Instruction::RRA,
@@ -1972,42 +1960,42 @@ mod test {
             );
             cpu.reg.set_a(0b_0011_0110);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0b_0001_1011);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0b_0000_1101);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0b_1000_0110);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0b_1100_0011);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0b_0110_0001);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0b_1011_0000);
             assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0b_1101_1000);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0b_0110_1100);
             assert_eq!(cpu.reg.f(), 0x00);
@@ -2018,7 +2006,7 @@ mod test {
         // }
         #[test]
         fn test_cpl() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::CPL,
                     Instruction::CPL,
@@ -2030,32 +2018,32 @@ mod test {
 
             cpu.reg.set_a(0b_0101_1010);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0b_1010_0101);
             assert_eq!(cpu.reg.f(), flags::N | flags::H);
 
             cpu.reg.set_f(0xF0);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0b_0101_1010);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N | flags::H | flags::C);
 
             cpu.reg.set_f(0x00);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0b_1010_0101);
             assert_eq!(cpu.reg.f(), flags::N | flags::H);
 
             cpu.reg.set_f(0xF0);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0b_0101_1010);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N | flags::H | flags::C);
         }
         #[test]
         fn test_scf() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::SCF,
                     Instruction::SCF,
@@ -2065,28 +2053,28 @@ mod test {
                 Some(0xF0),
             );
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.f(), flags::Z | flags::C);
             // assert_eq!(cpu.reg.f(), flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.f(), flags::Z | flags::C);
 
             cpu.reg.set_f(0x00);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.f(), flags::C);
 
             cpu.reg.set_f(0x80);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.f(), flags::Z | flags::C);
         }
         #[test]
         fn test_ccf() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::CCF,
                     Instruction::CCF,
@@ -2096,29 +2084,29 @@ mod test {
                 Some(0x00),
             );
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.f(), flags::C);
 
             cpu.reg.set_f(0xF0);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.f(), flags::Z);
 
             cpu.reg.set_f(0x70);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_f(0xE0);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.f(), flags::Z | flags::C);
         }
         #[test]
         fn test_jr_imm8() {
             let neg_jump: i8 = -6;
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::JRImm8,
                     Instruction::Data { byte: 2 },
@@ -2139,22 +2127,22 @@ mod test {
                 Some(0xF0),
             );
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10A);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
 
-            cpu.step();
-            assert_eq!(cpu.resolve_opcode(cpu.fetch_byte()), Instruction::Nop);
+            cpu.step(&mut mem);
+            assert_eq!(cpu.resolve_opcode(cpu.fetch_byte(&mem)), Instruction::Nop);
         }
         #[test]
         fn test_jr_cond_imm8() {
             let neg_jump: i8 = -6;
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::JRCondImm8 { cond: 0 },
                     Instruction::Data { byte: 2 },
@@ -2175,17 +2163,17 @@ mod test {
                 Some(0x00),
             );
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10A);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
 
-            cpu.step();
-            assert_eq!(cpu.resolve_opcode(cpu.fetch_byte()), Instruction::Nop);
+            cpu.step(&mut mem);
+            assert_eq!(cpu.resolve_opcode(cpu.fetch_byte(&mem)), Instruction::Nop);
         }
         // #[test]
         // fn test_stop() {
@@ -2201,7 +2189,7 @@ mod test {
         #[test]
         fn test_ld_r8_r8() {
             let initial_flag = 0xA0;
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::LdR8R8 { dest: 0, source: 1 },
                     Instruction::LdR8R8 { dest: 3, source: 2 },
@@ -2213,7 +2201,7 @@ mod test {
 
             cpu.reg.set_b(0xAA);
             cpu.reg.set_c(0x55);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.b(), 0x55);
             assert_eq!(cpu.reg.c(), 0x55);
@@ -2221,21 +2209,21 @@ mod test {
 
             cpu.reg.set_d(0xFF);
             cpu.reg.set_e(0x00);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.d(), 0xFF);
             assert_eq!(cpu.reg.e(), 0xFF);
 
             cpu.reg.set_hl(0x3AD0);
-            cpu.mem[0x3AD0] = 0x7F;
-            cpu.step();
+            mem[0x3AD0] = 0x7F;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.d(), 0x7F);
 
-            cpu.mem[0x3AD0] = 0x12;
-            cpu.step();
+            mem[0x3AD0] = 0x12;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
-            assert_eq!(cpu.mem[cpu.reg.hl() as usize], 0x55);
+            assert_eq!(mem[cpu.reg.hl() as usize], 0x55);
         }
     }
     mod block_2 {
@@ -2244,7 +2232,7 @@ mod test {
         use super::setup;
         #[test]
         fn test_add_a_r8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::AddAR8 { operand: 0 },
                     Instruction::AddAR8 { operand: 1 },
@@ -2260,55 +2248,55 @@ mod test {
             // bcdehl [hl] a
 
             cpu.reg.set_b(0x01);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0x01);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_c(0x00);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0x01);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_d(0x0E);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0x0F);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_e(0x02);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0x11);
             assert_eq!(cpu.reg.f(), flags::H);
 
             cpu.reg.set_h(0xEE);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0xFF);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_l(0x01);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
 
-            cpu.mem[cpu.reg.hl() as usize] = 0x3E;
-            cpu.step();
+            mem[cpu.reg.hl() as usize] = 0x3E;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0x3E);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0x7C);
             assert_eq!(cpu.reg.f(), flags::H);
         }
         #[test]
         fn test_adc_a_r8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::AdcAR8 { operand: 0 },
                     Instruction::AdcAR8 { operand: 1 },
@@ -2323,55 +2311,55 @@ mod test {
             );
 
             cpu.reg.set_b(0x00);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0x01);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_c(0x00);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0x01);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_d(0x0E);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0x0F);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_e(0x02);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0x11);
             assert_eq!(cpu.reg.f(), flags::H);
 
             cpu.reg.set_h(0xEE);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0xFF);
             assert_eq!(cpu.reg.f(), 0x00);
 
             cpu.reg.set_l(0x01);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
 
-            cpu.mem[cpu.reg.hl() as usize] = 0x3E;
-            cpu.step();
+            mem[cpu.reg.hl() as usize] = 0x3E;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0x3F);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0x7E);
             assert_eq!(cpu.reg.f(), flags::H);
         }
         #[test]
         fn test_sub_a_r8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::SubAR8 { operand: 0 },
                     Instruction::SubAR8 { operand: 1 },
@@ -2387,55 +2375,55 @@ mod test {
 
             cpu.reg.set_a(0x30);
             cpu.reg.set_b(0x01);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0x2F);
             assert_eq!(cpu.reg.f(), flags::N | flags::H);
 
             cpu.reg.set_c(0x05);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0x2A);
             assert_eq!(cpu.reg.f(), flags::N);
 
             cpu.reg.set_d(0x2A);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N);
 
             cpu.reg.set_e(0x01);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0xFF);
             assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
 
             cpu.reg.set_h(0xF1);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0x0E);
             assert_eq!(cpu.reg.f(), flags::N);
 
             cpu.reg.set_l(0x1E);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0xF0);
             assert_eq!(cpu.reg.f(), flags::N | flags::C);
 
-            cpu.mem[cpu.reg.hl() as usize] = 0x05;
-            cpu.step();
+            mem[cpu.reg.hl() as usize] = 0x05;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0xEB);
             assert_eq!(cpu.reg.f(), flags::N | flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N);
         }
         #[test]
         fn test_sbc_a_r8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::SbcAR8 { operand: 0 },
                     Instruction::SbcAR8 { operand: 1 },
@@ -2451,55 +2439,55 @@ mod test {
 
             cpu.reg.set_a(0x30);
             cpu.reg.set_b(0x01);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0x2F);
             assert_eq!(cpu.reg.f(), flags::N | flags::H);
 
             cpu.reg.set_c(0x05);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0x2A);
             assert_eq!(cpu.reg.f(), flags::N);
 
             cpu.reg.set_d(0x2A);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N);
 
             cpu.reg.set_e(0x01);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0xFF);
             assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
 
             cpu.reg.set_h(0xF1);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0x0D);
             assert_eq!(cpu.reg.f(), flags::N);
 
             cpu.reg.set_l(0x1D);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0xF0);
             assert_eq!(cpu.reg.f(), flags::N | flags::C);
 
-            cpu.mem[cpu.reg.hl() as usize] = 0x05;
-            cpu.step();
+            mem[cpu.reg.hl() as usize] = 0x05;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0xEA);
             assert_eq!(cpu.reg.f(), flags::N | flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N);
         }
         #[test]
         fn test_and_a_r8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::AndAR8 { operand: 0 },
                     Instruction::AndAR8 { operand: 1 },
@@ -2515,56 +2503,56 @@ mod test {
 
             cpu.reg.set_a(0b_1111_1111);
             cpu.reg.set_b(0b_1111_1110);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0b_1111_1110);
             assert_eq!(cpu.reg.f(), flags::H);
 
             cpu.reg.set_c(0b_0000_1010);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0b_0000_1010);
             assert_eq!(cpu.reg.f(), flags::H);
 
             cpu.reg.set_d(0b_1111_1111);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0b_0000_1010);
             assert_eq!(cpu.reg.f(), flags::H);
 
             cpu.reg.set_e(0b_0000_0000);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0);
             assert_eq!(cpu.reg.f(), flags::Z | flags::H);
 
             cpu.reg.set_h(0b_1111_1111);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0);
             assert_eq!(cpu.reg.f(), flags::Z | flags::H);
 
             cpu.reg.set_a(0b_1111_1111);
             cpu.reg.set_l(0b_0011_1001);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0b_0011_1001);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.mem[cpu.reg.hl() as usize] = 0b_1110_0111;
-            cpu.step();
+            mem[cpu.reg.hl() as usize] = 0b_1110_0111;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0b_0010_0001);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0b_0010_0001);
             assert_eq!(cpu.reg.f(), flags::H);
         }
         #[test]
         fn test_xor_a_r8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::XorAR8 { operand: 0 },
                     Instruction::XorAR8 { operand: 1 },
@@ -2580,55 +2568,55 @@ mod test {
             cpu.reg.set_a(0b_1111_1111);
 
             cpu.reg.set_b(0b_0000_0001);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0b_1111_1110);
             assert_eq!(cpu.reg.f(), 0);
 
             cpu.reg.set_c(0b_0000_0001);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0b_1111_1111);
             assert_eq!(cpu.reg.f(), 0);
 
             cpu.reg.set_d(0b_1111_0000);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0b_0000_1111);
             assert_eq!(cpu.reg.f(), 0);
 
             cpu.reg.set_e(0b_0000_0000);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0b_0000_1111);
             assert_eq!(cpu.reg.f(), 0);
 
             cpu.reg.set_h(0b_0000_1111);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0);
             assert_eq!(cpu.reg.f(), flags::Z);
 
             cpu.reg.set_l(0b_1111_1111);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0b_1111_1111);
             assert_eq!(cpu.reg.f(), 0);
 
-            cpu.mem[cpu.reg.hl() as usize] = 0b_0101_0101;
-            cpu.step();
+            mem[cpu.reg.hl() as usize] = 0b_0101_0101;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0b_1010_1010);
             assert_eq!(cpu.reg.f(), 0);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0);
             assert_eq!(cpu.reg.f(), flags::Z);
         }
         #[test]
         fn test_or_a_r8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::OrAR8 { operand: 0 },
                     Instruction::OrAR8 { operand: 1 },
@@ -2644,57 +2632,57 @@ mod test {
             cpu.reg.set_a(0b_1111_1111);
 
             cpu.reg.set_b(0b_0000_0001);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0b_1111_1111);
             assert_eq!(cpu.reg.f(), 0);
 
             cpu.reg.set_a(0);
             cpu.reg.set_c(0b_0000_0001);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0b_0000_0001);
             assert_eq!(cpu.reg.f(), 0);
 
             cpu.reg.set_d(0b_1111_0000);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0b_1111_0001);
             assert_eq!(cpu.reg.f(), 0);
 
             cpu.reg.set_e(0b_0000_0000);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0b_1111_0001);
             assert_eq!(cpu.reg.f(), 0);
 
             cpu.reg.set_a(0);
             cpu.reg.set_h(0b_0000_0000);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0);
             assert_eq!(cpu.reg.f(), flags::Z);
 
             cpu.reg.set_l(0b_1111_1111);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0b_1111_1111);
             assert_eq!(cpu.reg.f(), 0);
 
-            cpu.mem[cpu.reg.hl() as usize] = 0b_0101_0101;
-            cpu.step();
+            mem[cpu.reg.hl() as usize] = 0b_0101_0101;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0b_1111_1111);
             assert_eq!(cpu.reg.f(), 0);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0b_1111_1111);
             assert_eq!(cpu.reg.f(), 0);
         }
         #[test]
         fn test_cp_a_r8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::CpAR8 { operand: 0 },
                     Instruction::CpAR8 { operand: 1 },
@@ -2710,55 +2698,55 @@ mod test {
 
             cpu.reg.set_a(0x30);
             cpu.reg.set_b(0x01);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x101);
             assert_eq!(cpu.reg.a(), 0x30);
             assert_eq!(cpu.reg.f(), flags::N | flags::H);
 
             cpu.reg.set_a(0x2F);
             cpu.reg.set_c(0x05);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0x2F);
             assert_eq!(cpu.reg.f(), flags::N);
 
             cpu.reg.set_a(0x2A);
             cpu.reg.set_d(0x2A);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x103);
             assert_eq!(cpu.reg.a(), 0x2A);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N);
 
             cpu.reg.set_a(0);
             cpu.reg.set_e(0x01);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0);
             assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
 
             cpu.reg.set_a(0xFF);
             cpu.reg.set_h(0xF1);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.reg.pc(), 0x105);
             assert_eq!(cpu.reg.a(), 0xFF);
             assert_eq!(cpu.reg.f(), flags::N);
 
             cpu.reg.set_a(0x0D);
             cpu.reg.set_l(0x1D);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0x0D);
             assert_eq!(cpu.reg.f(), flags::N | flags::C);
 
             cpu.reg.set_a(0xF0);
-            cpu.mem[cpu.reg.hl() as usize] = 0x05;
-            cpu.step();
+            mem[cpu.reg.hl() as usize] = 0x05;
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x107);
             assert_eq!(cpu.reg.a(), 0xF0);
             assert_eq!(cpu.reg.f(), flags::N | flags::H);
 
             cpu.reg.set_a(0xEA);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0xEA);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N);
@@ -2770,7 +2758,7 @@ mod test {
         use super::setup;
         #[test]
         fn test_add_a_imm8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::AddAImm8,
                     Instruction::Data { byte: 0xFF },
@@ -2793,49 +2781,49 @@ mod test {
             );
             // bcdehl [hl] a
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0xFF);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0x0D);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0x10);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10A);
             assert_eq!(cpu.reg.a(), 0x1E);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10C);
             assert_eq!(cpu.reg.a(), 0x2D);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10E);
             assert_eq!(cpu.reg.a(), 0x30);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x110);
             assert_eq!(cpu.reg.a(), 0x2F);
             assert_eq!(cpu.reg.f(), flags::C);
         }
         #[test]
         fn test_adc_a_imm8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::AdcAImm8,
                     Instruction::Data { byte: 0xFF },
@@ -2859,50 +2847,50 @@ mod test {
             // bcdehl [hl] a
 
             println!("{}", cpu.reg.a());
-            cpu.step();
+            cpu.step(&mut mem);
             println!("{}", cpu.reg.a());
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0xFF);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::H | flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0x0E);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0x11);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10A);
             assert_eq!(cpu.reg.a(), 0x1F);
             assert_eq!(cpu.reg.f(), 0x00);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10C);
             assert_eq!(cpu.reg.a(), 0x2E);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10E);
             assert_eq!(cpu.reg.a(), 0x31);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x110);
             assert_eq!(cpu.reg.a(), 0x30);
             assert_eq!(cpu.reg.f(), flags::H | flags::C);
         }
         #[test]
         fn test_sub_a_imm8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::SubAImm8,
                     Instruction::Data { byte: 0x01 },
@@ -2924,49 +2912,49 @@ mod test {
                 Some(0x00),
             );
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0xFF);
             assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0xF5);
             assert_eq!(cpu.reg.f(), flags::N);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0x05);
             assert_eq!(cpu.reg.f(), flags::N);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0xE5);
             assert_eq!(cpu.reg.f(), flags::N | flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10A);
             assert_eq!(cpu.reg.a(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10C);
             assert_eq!(cpu.reg.a(), 0xFB);
             assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10E);
             assert_eq!(cpu.reg.a(), 0xEC);
             assert_eq!(cpu.reg.f(), flags::N | flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x110);
             assert_eq!(cpu.reg.a(), 0xEC);
             assert_eq!(cpu.reg.f(), flags::N);
         }
         #[test]
         fn test_sbc_a_imm8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::SbcAImm8,
                     Instruction::Data { byte: 0x01 },
@@ -2988,49 +2976,49 @@ mod test {
                 Some(0x00),
             );
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0xFF);
             assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0xF4);
             assert_eq!(cpu.reg.f(), flags::N);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0x04);
             assert_eq!(cpu.reg.f(), flags::N);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0xE4);
             assert_eq!(cpu.reg.f(), flags::N | flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10A);
             assert_eq!(cpu.reg.a(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::N);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10C);
             assert_eq!(cpu.reg.a(), 0xFB);
             assert_eq!(cpu.reg.f(), flags::N | flags::H | flags::C);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10E);
             assert_eq!(cpu.reg.a(), 0xEB);
             assert_eq!(cpu.reg.f(), flags::N | flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x110);
             assert_eq!(cpu.reg.a(), 0xEB);
             assert_eq!(cpu.reg.f(), flags::N);
         }
         #[test]
         fn test_and_a_imm8() {
-            let mut cpu = setup(
+            let (mut cpu, mut mem) = setup(
                 vec![
                     Instruction::AndAImm8,
                     Instruction::Data { byte: 0b_1111_1111 },
@@ -3053,43 +3041,43 @@ mod test {
             );
             cpu.reg.set_a(0xFF);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x102);
             assert_eq!(cpu.reg.a(), 0b_1111_1111);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x104);
             assert_eq!(cpu.reg.a(), 0b_1010_1010);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x106);
             assert_eq!(cpu.reg.a(), 0b_1010_1010);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x108);
             assert_eq!(cpu.reg.a(), 0b_1010_0000);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10A);
             assert_eq!(cpu.reg.a(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::H);
 
             cpu.reg.set_a(0xFF);
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10C);
             assert_eq!(cpu.reg.a(), 0b_0101_0101);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x10E);
             assert_eq!(cpu.reg.a(), 0b_0000_0101);
             assert_eq!(cpu.reg.f(), flags::H);
 
-            cpu.step();
+            cpu.step(&mut mem);
             assert_eq!(cpu.pc(), 0x110);
             assert_eq!(cpu.reg.a(), 0x00);
             assert_eq!(cpu.reg.f(), flags::Z | flags::H);

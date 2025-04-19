@@ -1,56 +1,71 @@
-use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+extern crate sdl3;
+use super::{cpu::Cpu, memory::Memory};
+use sdl3::event::Event;
+use sdl3::keyboard::Keycode;
+use sdl3::pixels::Color;
+use std::time::Duration;
 
-#[derive(Default)]
+static DISPLAY_WIDTH: u32 = 160;
+static DISPLAY_HEIGHT: u32 = 144;
+
 pub struct Gameboy {
-    window: Option<Window>,
-    height: u32,
-    width: u32,
     scale: u32,
+    mem: Memory,
+    cpu: Cpu,
 }
 impl Gameboy {
-    pub fn new(height: u32, width: u32, scale: u32) -> Gameboy {
+    pub fn new(scale: u32) -> Gameboy {
         Gameboy {
-            window: None,
-            height,
-            width,
             scale,
+            mem: Memory::new(),
+            cpu: Cpu::new(),
         }
     }
 }
 
-impl ApplicationHandler for Gameboy {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.window = Some(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_inner_size(LogicalSize::new(
-                            self.width * self.scale,
-                            self.height * self.scale,
-                        ))
-                        .with_min_inner_size(LogicalSize::new(self.width, self.height))
-                        .with_resizable(true)
-                        .with_title("Gameboy")
-                        .with_decorations(true)
-                        .with_active(true),
-                )
-                .unwrap(),
-        );
-    }
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        match event {
-            WindowEvent::CloseRequested => {
-                println!("Closing window");
-                event_loop.exit();
+impl Gameboy {
+    pub fn run(&mut self) {
+        let sdl_context = sdl3::init().unwrap();
+        let video_subsystem = sdl_context.video().unwrap();
+
+        let window = video_subsystem
+            .window(
+                "Gameboy",
+                DISPLAY_WIDTH * self.scale,
+                DISPLAY_HEIGHT * self.scale,
+            )
+            .position_centered()
+            .build()
+            .unwrap();
+
+        let mut canvas = window.into_canvas();
+
+        canvas.set_draw_color(Color::RGB(0, 255, 255));
+        canvas.clear();
+        canvas.present();
+
+        let mut event_pump = sdl_context.event_pump().unwrap();
+
+        let mut i = 0;
+
+        self.cpu.step(&mut self.mem);
+
+        'running: loop {
+            i = (i + 1) % 255;
+            canvas.set_draw_color(Color::RGB(i, 64, 255 - i));
+            canvas.clear();
+            for event in event_pump.poll_iter() {
+                match event {
+                    Event::Quit { .. }
+                    | Event::KeyDown {
+                        keycode: Some(Keycode::Escape),
+                        ..
+                    } => break 'running,
+                    _ => {}
+                }
             }
-            WindowEvent::RedrawRequested => {
-                self.window.as_ref().unwrap().request_redraw();
-            }
-            _ => (),
+            canvas.present();
+            ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
         }
     }
 }
