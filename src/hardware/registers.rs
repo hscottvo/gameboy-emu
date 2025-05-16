@@ -16,45 +16,59 @@ pub struct Registers {
 
 // getters
 impl Registers {
+    #[must_use]
     pub fn a(&self) -> &u8 {
         &self.a
     }
+    #[must_use]
     pub fn b(&self) -> &u8 {
         &self.b
     }
+    #[must_use]
     pub fn c(&self) -> &u8 {
         &self.c
     }
+    #[must_use]
     pub fn d(&self) -> &u8 {
         &self.d
     }
+    #[must_use]
     pub fn e(&self) -> &u8 {
         &self.e
     }
+    #[must_use]
     pub fn f(&self) -> &u8 {
         &self.f
     }
+    #[must_use]
     pub fn h(&self) -> &u8 {
         &self.h
     }
+    #[must_use]
     pub fn l(&self) -> &u8 {
         &self.l
     }
+    #[must_use]
     pub fn af(&self) -> u16 {
-        ((self.a as u16) << 8) + self.f as u16
+        (u16::from(self.a) << 8) + u16::from(self.f)
     }
+    #[must_use]
     pub fn bc(&self) -> u16 {
-        ((self.b as u16) << 8) + self.c as u16
+        (u16::from(self.b) << 8) + u16::from(self.c)
     }
+    #[must_use]
     pub fn de(&self) -> u16 {
-        ((self.d as u16) << 8) + self.e as u16
+        (u16::from(self.d) << 8) + u16::from(self.e)
     }
+    #[must_use]
     pub fn hl(&self) -> u16 {
-        ((self.h as u16) << 8) + self.l as u16
+        (u16::from(self.h) << 8) + u16::from(self.l)
     }
+    #[must_use]
     pub fn sp(&self) -> &u16 {
         &self.sp
     }
+    #[must_use]
     pub fn pc(&self) -> &u16 {
         &self.pc
     }
@@ -88,25 +102,25 @@ impl Registers {
     }
     pub fn set_af(&mut self, value: u16) {
         self.set_a((value >> 8) as u8);
-        self.set_f(value as u8);
+        self.set_f((value & 0b_1111_1111) as u8);
     }
     pub fn set_bc(&mut self, value: u16) {
         self.set_b((value >> 8) as u8);
-        self.set_c(value as u8);
+        self.set_c((value & 0b_1111_1111) as u8);
     }
     pub fn set_de(&mut self, value: u16) {
         self.set_d((value >> 8) as u8);
-        self.set_e(value as u8);
+        self.set_e((value & 0b_1111_1111) as u8);
     }
     pub fn set_hl(&mut self, value: u16) {
         self.set_h((value >> 8) as u8);
-        self.set_l(value as u8);
+        self.set_l((value & 0b_1111_1111) as u8);
     }
     pub fn set_sp(&mut self, value: u16) {
-        self.sp = value
+        self.sp = value;
     }
     pub fn set_pc(&mut self, value: u16) {
-        self.pc = value
+        self.pc = value;
     }
 }
 
