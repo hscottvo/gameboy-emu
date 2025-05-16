@@ -1,11 +1,8 @@
 use gameboy::emulator;
+use std::error::Error;
 
-fn main() {
-    let mut emulator = match emulator::Emulator::new() {
-        Ok(emu) => emu,
-        Err(e) => {
-            panic!("tootoo");
-        }
-    };
+fn main() -> Result<(), Box<dyn Error>> {
+    let mut emulator = emulator::Emulator::new()?;
     emulator.run();
+    Ok(())
 }

@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::fmt;
 use std::sync::Arc;
 use tokio::{
     sync::RwLock,
@@ -20,6 +22,22 @@ pub enum EmuError {
     MiniFBError(minifb::Error),
     TryFromIntError(std::num::TryFromIntError),
     IOError(std::io::Error),
+}
+
+impl Error for EmuError {}
+impl fmt::Display for EmuError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            EmuError::MiniFBError(err) => write!(f, "MiniFB error: {err}"),
+            EmuError::TryFromIntError(err) => write!(f, "TryFromIntError: {err}"),
+            EmuError::IOError(err) => write!(f, "IO error: {err}"),
+        }
+    }
+}
+impl fmt::Debug for EmuError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{self}")
+    }
 }
 
 impl From<minifb::Error> for EmuError {
@@ -49,7 +67,6 @@ impl EmuDisplay {
             HEIGHT,
             WindowOptions::default(),
         )?;
-        // window.set_target_fps(10);
         Ok(EmuDisplay {
             counter,
             buffer,
